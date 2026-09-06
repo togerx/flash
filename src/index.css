@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+
+/* Anneau de focus clavier aux couleurs de l'application : le contour par défaut
+   de Chrome est d'un blanc éclatant, très voyant sur les écrans sombres.
+   `:focus-visible` n'apparaît qu'au clavier, jamais après un clic. */
+:focus-visible {
+  outline: 2px solid rgb(139 92 246 / .85);   /* violet-500 */
+  outline-offset: 2px;
+}
+html, body, #root { height: 100%; }
+body { margin: 0; -webkit-font-smoothing: antialiased; }
+/* Empêche le navigateur d'utiliser le balayage horizontal à deux doigts pour sa
+   propre navigation « précédent/suivant » : l'app s'en sert pour revenir en
+   arrière (voir la pile useBack dans ui.jsx). */
+html { overscroll-behavior-x: none; }
+
+/* Animations partagées (flip + agrandissement d'image) */
+.flip-card { perspective: 1400px; position: relative; }
+/* inset:0 plutôt que height:100% : la hauteur de .flip-card vient du flux
+   (min-height/flex), et un pourcentage ne s'y résoudrait pas. */
+.flip-inner { position: absolute; inset: 0; transition: transform .55s cubic-bezier(.4,0,.2,1); transform-style: preserve-3d; }
+.flip-inner.flipped { transform: rotateY(180deg); }
+/* Retour au recto instantané lors d'un changement de carte (voir Review.jsx). */
+.flip-inner.no-anim { transition: none; }
+.flip-face { position: absolute; inset: 0; -webkit-backface-visibility: hidden; backface-visibility: hidden; }
+.flip-back { transform: rotateY(180deg); }
+/* Auto-évaluation : la carte s'entoure d'un halo vert ou rose, marque un léger
+   rebond, puis se retire — le temps que l'œil enregistre le verdict avant que
+   la carte suivante n'apparaisse. */
+@keyframes mark-out {
+  0%   { transform: scale(1); opacity: 1; }
+  30%  { transform: scale(1.025); opacity: 1; }
+  100% { transform: scale(.94); opacity: .25; }
+}
+.mark-ok, .mark-ko {
+  border-radius: 1.5rem;                    /* aligné sur le rounded-3xl des faces */
+  animation: mark-out .32s cubic-bezier(.4, 0, .2, 1) forwards;
+}
+.mark-ok { box-shadow: 0 0 0 3px rgb(16 185 129 / .95), 0 0 34px 8px rgb(16 185 129 / .38); }
+.mark-ko { box-shadow: 0 0 0 3px rgb(244 63 94 / .95), 0 0 34px 8px rgb(244 63 94 / .38); }
+
+@media (prefers-reduced-motion: reduce) {
+  /* Le halo reste, le mouvement disparaît. */
+  .mark-ok, .mark-ko { animation: none; }
+}
+
+/* Encouragement passager, à l'entrée dans les cartes déjà acquises. */
+@keyframes encore-pop {
+  0%   { opacity: 0; transform: translateY(10px) scale(.92); }
+  12%  { opacity: 1; transform: translateY(0) scale(1); }
+  22%  { transform: translateY(0) scale(1.04); }
+  32%  { transform: translateY(0) scale(1); }
+  82%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-8px) scale(.98); }
+}
+.encore { animation: encore-pop 2.4s cubic-bezier(.2, .7, .2, 1) forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .encore { animation: none; }
+}
+
+/* Logo en attente : respiration lente, plus lisible qu'une roue qui tourne. */
+@keyframes logo-breathe {
+  0%, 100% { transform: scale(1); opacity: .85; }
+  50%      { transform: scale(1.14); opacity: 1; }
+}
+.logo-breathe { animation: logo-breathe 1.5s ease-in-out infinite; }
+
+/* Corps défilant d'une modale : min-height:0 est indispensable, sans quoi un
+   enfant flex refuse de rétrécir sous son contenu et pousse le pied hors écran. */
+.modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+/* Barre de défilement discrète : presque invisible au repos, un peu plus
+   marquée au survol. `-light` pour les fonds colorés ou sombres. */
+.soft-scroll { scrollbar-width: thin; scrollbar-color: rgb(0 0 0 / .10) transparent; }
+.soft-scroll:hover { scrollbar-color: rgb(0 0 0 / .30) transparent; }
+.soft-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.soft-scroll::-webkit-scrollbar-track { background: transparent; }
+.soft-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background-color: rgb(0 0 0 / .10);
+  transition: background-color .2s ease;
+}
+.soft-scroll:hover::-webkit-scrollbar-thumb { background-color: rgb(0 0 0 / .30); }
+
+.soft-scroll.on-dark { scrollbar-color: rgb(255 255 255 / .18) transparent; }
+.soft-scroll.on-dark:hover { scrollbar-color: rgb(255 255 255 / .45) transparent; }
+.soft-scroll.on-dark::-webkit-scrollbar-thumb { background-color: rgb(255 255 255 / .18); }
+.soft-scroll.on-dark:hover::-webkit-scrollbar-thumb { background-color: rgb(255 255 255 / .45); }
+
+@keyframes lb-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes lb-in { from { opacity: 0; transform: scale(.82); } to { opacity: 1; transform: scale(1); } }
+.lb-veil { animation: lb-fade .18s ease-out; }
+.lb-img { animation: lb-in .24s cubic-bezier(.2,.7,.2,1); }
+@media (prefers-reduced-motion: reduce) {
+  .flip-inner, .lb-veil, .lb-img, .logo-breathe { transition: none; animation: none; }
+}

@@ -1,0 +1,217 @@
+rules_version = '2';
+
+// Modèle : un paquet (deck) appartient à un "owner" et liste ses "members".
+// Seuls les membres lisent le paquet et ses cartes.
+//
+// Deux droits distincts, à ne pas confondre :
+//  - ÉDITER le contenu (cartes, nom, ordre) : le propriétaire, et les membres
+//    seulement si le propriétaire a mis `membersCanEdit` à true ;
+//  - SUIVRE sa progression : tout membre, même sans droit d'édition. Le suivi
+//    vit dans le champ `learned` des cartes (uid -> bool) et dans `stats` du
+//    paquet, d'où des règles qui isolent la clé de l'utilisateur courant.
+//
+// Personne ne peut toucher aux autres membres : on ne s'ajoute et on ne se
+// retire que soi-même (rejoindre par code / quitter le paquet).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    match /decks/{deckId} {
+      function isMember() { return request.auth.uid in resource.data.members; }
+      function isOwner()  { return request.auth.uid == resource.data.owner; }
+      function canEdit()  { return isOwner() || (isMember() && resource.data.get('membersCanEdit', false)); }
+      function changed()  { return request.resource.data.diff(resource.data).affectedKeys(); }
+
+      // La liste des membres, privée de l'utilisateur courant.
+      function others(members) { return members.removeAll([request.auth.uid]); }
+      function othersUnchanged() {
+        return others(resource.data.members).hasOnly(others(request.resource.data.members))
+          && others(request.resource.data.members).hasOnly(others(resource.data.members));
+      }
+      // On ne renseigne que son propre pseudo dans la table pseudos.
+      function pseudosOnlySelf() {
+        return request.resource.data.get('pseudos', {})
+          .diff(resource.data.get('pseudos', {})).affectedKeys().hasOnly([request.auth.uid]);
+      }
+
+      // Publié = présent dans au moins un catalogue de groupe (champ `groups`).
+      function isPublished() { return resource.data.get('groups', []).size() > 0; }
+
+      // Un paquet publié est lisible sans en être membre, mais UNIQUEMENT par les
+      // membres d'un groupe où il est publié (et non plus par n'importe quel
+      // utilisateur connecté). L'appartenance est lue dans le doc de groupe.
+      // Firestore ne sait pas parcourir un tableau : on teste les 4 premiers
+      // groupes du paquet, ce qui couvre tous les cas réels (un paquet est
+      // presque toujours publié dans un seul groupe) tout en restant sous la
+      // limite de 10 accès `get`/`exists` par requête. `exists` évite qu'un
+      // groupe supprimé mais encore listé ne fasse échouer toute la lecture.
+      function inGroup(gid) {
+        return exists(/databases/$(database)/documents/groups/$(gid))
+          && request.auth.uid in get(/databases/$(database)/documents/groups/$(gid)).data.members;
+      }
+      function readableViaGroup() {
+        return isPublished() && (
+          inGroup(resource.data.groups[0])
+          || (resource.data.groups.size() > 1 && inGroup(resource.data.groups[1]))
+          || (resource.data.groups.size() > 2 && inGroup(resource.data.groups[2]))
+          || (resource.data.groups.size() > 3 && inGroup(resource.data.groups[3]))
+        );
+      }
+
+      allow read: if signedIn() && (isMember() || readableViaGroup());
+
+      allow create: if signedIn()
+        && request.resource.data.owner == request.auth.uid
+        && request.auth.uid in request.resource.data.members;
+
+      allow delete: if signedIn() && isOwner();
+
+      allow update: if signedIn() && (
+        // Rejoindre par code : un non-membre s'ajoute lui-même, et lui seul.
+        ( !isMember()
+          && changed().hasOnly(['members', 'pseudos'])
+          && request.auth.uid in request.resource.data.members
+          && othersUnchanged()
+          && pseudosOnlySelf() )
+        ||
+        // Membre : quitter le paquet, tenir à jour sa progression et les
+        // compteurs dérivés (`stats`/`cardCount` sont recalculables, donc non
+        // restreints à sa propre clé : c'est ce qui permet la réparation).
+        ( isMember()
+          && changed().hasOnly(['members', 'pseudos', 'stats', 'cardCount'])
+          && othersUnchanged()
+          && pseudosOnlySelf() )
+        ||
+        // Édition du contenu : propriétaire, ou membres s'il l'a autorisé.
+        ( canEdit() && changed().hasOnly(['name', 'stats', 'cardCount']) )
+        ||
+        // Ouvrir ou fermer l'édition aux membres : le propriétaire seul.
+        ( isOwner() && changed().hasOnly(['membersCanEdit']) )
+        ||
+        // Publier / retirer d'un groupe : le propriétaire ajuste `groups`.
+        ( isOwner() && changed().hasOnly(['groups']) )
+      );
+
+      match /cards/{cardId} {
+        function deck()      { return get(/databases/$(database)/documents/decks/$(deckId)).data; }
+        function member()    { return request.auth.uid in deck().members; }
+        function editor()    { return request.auth.uid == deck().owner || deck().get('membersCanEdit', false); }
+        function published() { return deck().get('groups', []).size() > 0; }
+        // Même règle que sur le paquet : un aperçu sans rejoindre n'est ouvert
+        // qu'aux membres d'un groupe où le paquet est publié (voir readableViaGroup
+        // du paquet). L'écriture reste réservée aux membres.
+        function inGroup(gid) {
+          return exists(/databases/$(database)/documents/groups/$(gid))
+            && request.auth.uid in get(/databases/$(database)/documents/groups/$(gid)).data.members;
+        }
+        function readableViaGroup() {
+          return published() && (
+            inGroup(deck().groups[0])
+            || (deck().groups.size() > 1 && inGroup(deck().groups[1]))
+            || (deck().groups.size() > 2 && inGroup(deck().groups[2]))
+            || (deck().groups.size() > 3 && inGroup(deck().groups[3]))
+          );
+        }
+
+        allow read: if signedIn() && (member() || readableViaGroup());
+        allow create, delete: if signedIn() && member() && editor();
+
+        allow update: if signedIn() && member() && (
+          editor()
+          ||
+          // Sans droit d'édition, un membre ne touche qu'à SON propre suivi :
+          // `learned` (auto-éval libre) et `srs` (répétition espacée).
+          ( request.resource.data.diff(resource.data).affectedKeys().hasOnly(['learned', 'srs'])
+            && request.resource.data.get('learned', {})
+                 .diff(resource.data.get('learned', {})).affectedKeys().hasOnly([request.auth.uid])
+            && request.resource.data.get('srs', {})
+                 .diff(resource.data.get('srs', {})).affectedKeys().hasOnly([request.auth.uid]) )
+        );
+      }
+    }
+
+    // Table de correspondance code -> deckId, pour rejoindre un paquet.
+    // Lisible par tout utilisateur connecté ; écrite par le propriétaire à la création.
+    // Suppression permise seulement si le paquet visé n'existe plus : cela nettoie
+    // le code après suppression du paquet, sans permettre de « dé-partager » un
+    // paquet vivant.
+    match /shareCodes/{code} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update: if false;
+      allow delete: if signedIn()
+        && !exists(/databases/$(database)/documents/decks/$(resource.data.deckId));
+    }
+
+    // Groupes = catalogues de paquets. Mêmes principes que les paquets :
+    // lecture réservée aux membres, personne ne retire un autre membre, on
+    // rejoint par code (self-join). Le catalogue liste des paquets publiés ;
+    // seul le propriétaire d'un paquet peut l'y publier ou l'en retirer.
+    match /groups/{groupId} {
+      function isMember() { return request.auth.uid in resource.data.members; }
+      function isOwner()  { return request.auth.uid == resource.data.owner; }
+      function changed()  { return request.resource.data.diff(resource.data).affectedKeys(); }
+      function others(m)  { return m.removeAll([request.auth.uid]); }
+      function othersUnchanged() {
+        return others(resource.data.members).hasOnly(others(request.resource.data.members))
+          && others(request.resource.data.members).hasOnly(others(resource.data.members));
+      }
+      function pseudosOnlySelf() {
+        return request.resource.data.get('pseudos', {})
+          .diff(resource.data.get('pseudos', {})).affectedKeys().hasOnly([request.auth.uid]);
+      }
+
+      allow read: if signedIn() && isMember();
+
+      allow create: if signedIn()
+        && request.resource.data.owner == request.auth.uid
+        && request.auth.uid in request.resource.data.members;
+
+      allow delete: if signedIn() && isOwner();
+
+      allow update: if signedIn() && (
+        // Rejoindre par code : un non-membre s'ajoute lui-même, et lui seul.
+        ( !isMember()
+          && changed().hasOnly(['members', 'pseudos'])
+          && request.auth.uid in request.resource.data.members
+          && othersUnchanged()
+          && pseudosOnlySelf() )
+        ||
+        // Membre : quitter le groupe, ou renseigner son pseudo.
+        ( isMember()
+          && changed().hasOnly(['members', 'pseudos'])
+          && othersUnchanged()
+          && pseudosOnlySelf() )
+        ||
+        // Publier / retirer un paquet met à jour ces compteurs ; renommer touche
+        // le nom. Réservé aux membres (le propriétaire du paquet en est un).
+        ( isMember() && changed().hasOnly(['name', 'deckCount', 'lastPublishedAt']) )
+      );
+
+      // Entrée de catalogue : un paquet publié dans le groupe.
+      match /catalog/{deckId} {
+        function grp() { return get(/databases/$(database)/documents/groups/$(groupId)).data; }
+        function groupMember() { return request.auth.uid in grp().members; }
+
+        allow read: if signedIn() && groupMember();
+        // Publier / mettre à jour : membre du groupe ET propriétaire du paquet.
+        allow create, update: if signedIn() && groupMember()
+          && request.resource.data.ownerUid == request.auth.uid;
+        allow delete: if signedIn() && groupMember()
+          && resource.data.ownerUid == request.auth.uid;
+      }
+    }
+
+    match /groupCodes/{code} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update: if false;
+      allow delete: if signedIn()
+        && !exists(/databases/$(database)/documents/groups/$(resource.data.groupId));
+    }
+  }
+}

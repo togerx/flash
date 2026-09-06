@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#7c3aed" />
+    <!-- iOS ignore le manifeste pour l'icône d'écran d'accueil et n'accepte pas
+         le SVG : ce PNG est le seul moyen d'y avoir une vraie icône. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <title>Flash</title>
+    <!-- Applique le thème avant le premier rendu : sans cela, une page claire
+         apparaîtrait brièvement avant que React ne pose la classe. -->
+    <script>
+      (function () {
+        try {
+          var c = localStorage.getItem("flash.theme");
+          var sombre = c === "dark" || (c !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.classList.toggle("dark", sombre);
+          document.documentElement.style.colorScheme = sombre ? "dark" : "light";
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
