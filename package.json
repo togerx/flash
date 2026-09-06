@@ -9,7 +9,12 @@
     "preview": "vite preview",
     "deploy": "npm run build && firebase deploy",
     "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage",
-    "purge:images": "node scripts/purge-images.mjs"
+    "purge:images": "node scripts/purge-images.mjs",
+    "flow": "node scripts/dev.mjs",
+    "work": "node scripts/dev.mjs work",
+    "save": "node scripts/dev.mjs save",
+    "push": "node scripts/dev.mjs push",
+    "sync": "node scripts/dev.mjs sync"
   },
   "dependencies": {
     "browser-image-compression": "^2.0.2",
