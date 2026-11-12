@@ -213,5 +213,13 @@ service cloud.firestore {
       allow delete: if signedIn()
         && !exists(/databases/$(database)/documents/groups/$(resource.data.groupId));
     }
+
+    // Préférences privées d'un utilisateur : dossiers personnels (étiquettes) de
+    // rangement de sa liste d'accueil, et l'association paquet -> étiquettes.
+    // Strictement privé : chacun ne lit et n'écrit que son propre document. Rien
+    // d'autrui n'y est jamais visible.
+    match /users/{userId} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
   }
 }

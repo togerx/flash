@@ -3,7 +3,7 @@ import {
   Plus, Play, Pencil, Trash2, Check, X, Users, LogIn, LogOut, Copy, Upload,
   Download, HardDriveDownload, Loader2, Sun, Moon, Sparkles, CheckSquare,
   Search, ArrowDownWideNarrow, ArrowUpNarrowWide, GitMerge, MoreVertical,
-  ShieldCheck, Mail, Share2,
+  ShieldCheck, Mail, Share2, Folder, GripVertical,
 } from "lucide-react";
 import { useTheme } from "./lib/theme";
 import { Shell, Header, ConfirmModal, Logo, Loading, Modal, Highlight } from "./components/ui";
@@ -18,6 +18,8 @@ import AuthScreen from "./components/AuthScreen";
 import AuthAction from "./components/AuthAction";
 import LinkAccountModal from "./components/LinkAccountModal";
 import ShareModal from "./components/ShareModal";
+import { FoldersModal, FolderPicker } from "./components/FoldersModal";
+import { watchUserPrefs, toggleDeckFolder, tagsOf } from "./lib/folders";
 import { isOfflineDeck, prefetchDeck, forgetDeck } from "./lib/offline";
 import {
   watchDecks, createDeck, renameDeck, deleteDeck, joinByCode, joinDeck, copyDeck, leaveDeck,
@@ -521,7 +523,7 @@ function VerifyBanner({ email, onSend, onRefresh }) {
 /* Menu « ⋮ » regroupant les actions secondaires d'une vignette : hors ligne,
    copier, renommer, supprimer / quitter. Évite que quatre icônes ne débordent
    d'une vignette étroite. */
-function DeckMenu({ deck, uid, copying, onShare, onCopy, onRename, onDelete, onLeave }) {
+function DeckMenu({ deck, uid, copying, onShare, onCopy, onRename, onDelete, onLeave, onFolders }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const [saved, setSaved] = useState(() => isOfflineDeck(deck.id));
@@ -577,6 +579,9 @@ function DeckMenu({ deck, uid, copying, onShare, onCopy, onRename, onDelete, onL
           <button onClick={() => { setOpen(false); onCopy(); }} disabled={copying} className={item}>
             <Copy size={16} className="text-slate-400" /> Copier le paquet
           </button>
+          <button onClick={() => { setOpen(false); onFolders(); }} className={item}>
+            <Folder size={16} className="text-slate-400" /> Dossiers…
+          </button>
           {canEditDeck(deck, uid) && (
             <button onClick={() => { setOpen(false); onRename(); }} className={item}>
               <Pencil size={16} className="text-slate-400" /> Renommer
@@ -598,6 +603,30 @@ function DeckMenu({ deck, uid, copying, onShare, onCopy, onRename, onDelete, onL
   );
 }
 
+/* Puce de filtre par dossier (barre d'accueil). Sert aussi de CIBLE de dépôt
+   quand on fait glisser un paquet : `folderId` la rend repérable par
+   elementFromPoint, `dragOver` la met en évidence sous le doigt/curseur. */
+function FolderChip({ label, count, active, onClick, icon, folderId, dragOver }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      data-folder-id={folderId}
+      className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium ring-1 transition ${
+        dragOver
+          ? "bg-violet-100 text-violet-800 ring-2 ring-violet-500 dark:bg-violet-500/20 dark:text-violet-100"
+          : active
+            ? "bg-violet-600 text-white ring-violet-600"
+            : "bg-white text-slate-600 ring-slate-200 hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:ring-slate-600"
+      }`}
+    >
+      {icon && <Folder size={13} className={dragOver ? "text-violet-600" : active ? "text-white" : "text-violet-500"} />}
+      <span className="max-w-[10rem] truncate">{label}</span>
+      <span className={active && !dragOver ? "text-violet-200" : "text-slate-400 dark:text-slate-500"}>{count}</span>
+    </button>
+  );
+}
+
 function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onResetAll, onDeleteAccount, onLinkAccount, onSignOut, onSendVerification, onRefreshUser, onOpen, onMultiReview, onMerge, groups, onOpenGroups, onCreate, onRename, onDelete, onCopy, onLeave, onImport, onJoin }) {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -611,6 +640,12 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
   const [copying, setCopying] = useState(null);   // id du paquet en cours de copie
   const [sharing, setSharing] = useState(null);   // paquet dont on montre le partage
   const [importing, setImporting] = useState(false);
+  // Dossiers personnels (étiquettes) : un seul doc utilisateur, écouté ici.
+  const [prefs, setPrefs] = useState({ folders: [], deckTags: {} });
+  const [activeFolder, setActiveFolder] = useState(null);   // null=tous · "none"=sans dossier · sinon id
+  const [foldersOpen, setFoldersOpen] = useState(false);    // modale de gestion
+  const [tagDeck, setTagDeck] = useState(null);             // paquet dont on choisit les dossiers (⋮)
+  const [tagBulk, setTagBulk] = useState(false);            // assignation à la sélection multiple
   const [profile, setProfile] = useState(false);
   const [theme, toggleTheme] = useTheme();
   // Sélection de plusieurs paquets pour une révision commune.
@@ -624,6 +659,26 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
   const [sortDir, setSortDir] = useState(defaultDir("recent"));
 
   const choisis = decks.filter((d) => picked.has(d.id));
+
+  // Écoute des préférences (dossiers + étiquettes) : un doc users/{uid}.
+  useEffect(() => watchUserPrefs(uid, setPrefs), [uid]);
+  const { folders, deckTags } = prefs;
+  const folderIds = new Set(folders.map((f) => f.id));
+  // Étiquettes VALIDES d'un paquet : on ignore les ids de dossiers supprimés
+  // (une étiquette obsolète ne doit ni s'afficher ni fausser « sans dossier »).
+  const deckFolders = (id) => tagsOf(deckTags, id).filter((t) => folderIds.has(t));
+  // Quand un vrai dossier est sélectionné, création et import y rangent le nouveau
+  // paquet (null pour « Tous » et « Sans dossier »).
+  const activeFolderId = activeFolder && activeFolder !== "none" ? activeFolder : null;
+  // Le filtre actif retombe sur « Tous » si son dossier vient d'être supprimé.
+  useEffect(() => {
+    if (activeFolder && activeFolder !== "none" && !folderIds.has(activeFolder)) setActiveFolder(null);
+  }, [folders]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const inActiveFolder = (d) => {
+    if (!activeFolder) return true;
+    if (activeFolder === "none") return deckFolders(d.id).length === 0;
+    return deckFolders(d.id).includes(activeFolder);
+  };
 
   // Recherche insensible à la casse et aux accents, sur le nom du paquet et le
   // nom du créateur.
@@ -639,7 +694,7 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
   };
   const dir = sortDir === "asc" ? 1 : -1;
   const visibles = decks
-    .filter((d) => !q || norm(d.name).includes(q) || norm(ownerName(d)).includes(q))
+    .filter((d) => (!q || norm(d.name).includes(q) || norm(ownerName(d)).includes(q)) && inActiveFolder(d))
     .sort((a, b) => dir * comparateurs[sort](a, b));
   const togglePick = (id) =>
     setPicked((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -651,6 +706,34 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
     finally { setCopying(null); }
   };
 
+  // Glisser un paquet sur une puce de dossier pour l'y ranger (tactile ET souris).
+  // Pointer Events + elementFromPoint, même approche que le réordonnancement des
+  // cartes : robuste sur téléphone comme sur ordinateur. L'état `drag` ne naît
+  // qu'au premier mouvement franc (seuil), pour ne pas gêner un simple clic.
+  const [drag, setDrag] = useState(null);     // { id, name, x, y, overId } une fois actif
+  const dragRef = useRef(null);               // suivi interne, sans re-render à chaque pixel
+  const startDeckDrag = (d, e) => {
+    if (picking) return;
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    dragRef.current = { id: d.id, name: d.name, startX: e.clientX, startY: e.clientY, active: false, overId: null };
+  };
+  const moveDeckDrag = (e) => {
+    const info = dragRef.current;
+    if (!info) return;
+    if (!info.active && Math.hypot(e.clientX - info.startX, e.clientY - info.startY) < 6) return;
+    info.active = true;
+    // Le dossier survolé : la puce sous le pointeur porte data-folder-id.
+    info.overId = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-folder-id]")?.dataset.folderId || null;
+    setDrag({ id: info.id, name: info.name, x: e.clientX, y: e.clientY, overId: info.overId });
+  };
+  const endDeckDrag = () => {
+    const info = dragRef.current;
+    dragRef.current = null;
+    if (info?.active && info.overId) toggleDeckFolder(uid, info.id, info.overId, true).catch((e) => console.error(e));
+    setDrag(null);
+  };
+
   // Échap ferme les barres de création / jonction, quel que soit le focus.
   useEffect(() => {
     if (!creating && !joining) return undefined;
@@ -659,7 +742,16 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
     return () => window.removeEventListener("keydown", onKey);
   }, [creating, joining]);
 
-  const submitCreate = () => { if (newName.trim()) { onCreate(newName.trim()); setNewName(""); setCreating(false); } };
+  const submitCreate = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setNewName(""); setCreating(false);
+    try {
+      const id = await onCreate(name);
+      // Dossier actif : le nouveau paquet y est rangé d'emblée.
+      if (activeFolderId && id) await toggleDeckFolder(uid, id, activeFolderId, true);
+    } catch (e) { console.error(e); }
+  };
   const submitJoin = async () => {
     setJoinErr("");
     try { await onJoin(joinCode); setJoinCode(""); setJoining(false); }
@@ -707,6 +799,9 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
               <span className="relative inline-flex h-3 w-3 rounded-full bg-violet-500" />
             </span>
           )}
+        </button>
+        <button onClick={() => setFoldersOpen(true)} title="Ranger vos paquets dans des dossiers" className="flex items-center gap-2 rounded-xl bg-white dark:bg-slate-900 px-4 py-2.5 font-semibold text-slate-800 dark:text-slate-200 shadow-sm ring-1 ring-slate-200 dark:ring-slate-700 transition hover:ring-slate-300 dark:hover:ring-slate-600">
+          <Folder size={17} /> Dossiers
         </button>
         {decks.length > 1 && (
           <button
@@ -790,6 +885,32 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
         </div>
       )}
 
+      {/* Barre de filtres par dossier : n'apparaît qu'une fois un dossier créé.
+          « Tous » et « Sans dossier » encadrent les dossiers de l'utilisateur. */}
+      {!loadingDecks && decks.length > 0 && folders.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <FolderChip label="Tous" count={decks.length} active={activeFolder === null} onClick={() => setActiveFolder(null)} />
+          {folders.map((f) => (
+            <FolderChip
+              key={f.id}
+              icon
+              folderId={f.id}
+              dragOver={drag?.overId === f.id}
+              label={f.name}
+              count={decks.filter((d) => deckFolders(d.id).includes(f.id)).length}
+              active={activeFolder === f.id}
+              onClick={() => setActiveFolder(f.id)}
+            />
+          ))}
+          <FolderChip
+            label="Sans dossier"
+            count={decks.filter((d) => deckFolders(d.id).length === 0).length}
+            active={activeFolder === "none"}
+            onClick={() => setActiveFolder("none")}
+          />
+        </div>
+      )}
+
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
         {picking && (
           <div className="col-span-full flex flex-wrap items-center gap-2 rounded-xl bg-violet-50 px-3 py-2 ring-1 ring-violet-200 dark:bg-violet-500/10 dark:ring-violet-500/30">
@@ -803,6 +924,14 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
                 className="rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-slate-700 ring-1 ring-slate-200 transition hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"
               >
                 {visibles.every((d) => picked.has(d.id)) ? "Tout décocher" : "Tout cocher"}
+              </button>
+              <button
+                onClick={() => setTagBulk(true)}
+                disabled={!choisis.length}
+                title="Ranger les paquets sélectionnés dans un dossier"
+                className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 ring-1 ring-slate-200 transition hover:ring-slate-300 disabled:opacity-40 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"
+              >
+                <Folder size={15} /> Ranger
               </button>
               <button
                 onClick={() => setMerging(true)}
@@ -878,6 +1007,18 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                   par <Highlight text={ownerName(d)} query={search} /> · {prog.total} carte{prog.total > 1 ? "s" : ""}
                 </p>
+                {deckFolders(d.id).length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {deckFolders(d.id).map((fid) => {
+                      const f = folders.find((x) => x.id === fid);
+                      return f && (
+                        <span key={fid} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                          <Folder size={10} /> {f.name}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
               </button>
             )}
 
@@ -887,6 +1028,20 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
 
             {renaming !== d.id && (
               <div className="mt-3 flex items-center gap-1 border-t border-slate-100 dark:border-slate-800 pt-3">
+                {/* Poignée : glisser la carte sur une puce de dossier pour l'y ranger. */}
+                {folders.length > 0 && !picking && (
+                  <button
+                    onPointerDown={(e) => startDeckDrag(d, e)}
+                    onPointerMove={moveDeckDrag}
+                    onPointerUp={endDeckDrag}
+                    onPointerCancel={endDeckDrag}
+                    aria-label="Glisser vers un dossier"
+                    title="Glisser vers un dossier"
+                    className="flex h-8 w-8 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg text-slate-300 transition hover:bg-slate-100 hover:text-slate-500 active:cursor-grabbing dark:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-400"
+                  >
+                    <GripVertical size={16} />
+                  </button>
+                )}
                 <button onClick={() => onOpen(d.id)} className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600"><Play size={14} /> Ouvrir</button>
                 {prog.total > 0 && (
                   // Raccourci : entre directement dans la séance recommandée,
@@ -909,6 +1064,7 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
                     onRename={() => { setRenaming(d.id); setRenameVal(d.name); }}
                     onDelete={() => setConfirmDel(d)}
                     onLeave={() => setConfirmLeave(d)}
+                    onFolders={() => setTagDeck(d)}
                   />
                 </div>
               </div>
@@ -947,7 +1103,13 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
       {importing && (
         <ImportModal
           onClose={() => setImporting(false)}
-          onImport={async (name, cards, onProgress) => { const r = await onImport(name, cards, onProgress); setImporting(false); return r; }}
+          onImport={async (name, cards, onProgress) => {
+            const r = await onImport(name, cards, onProgress);
+            // Dossier actif : le paquet importé y est rangé d'emblée.
+            if (activeFolderId && r?.deckId) toggleDeckFolder(uid, r.deckId, activeFolderId, true).catch((e) => console.error(e));
+            setImporting(false);
+            return r;
+          }}
         />
       )}
 
@@ -979,6 +1141,50 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
         // au clic) : sans quoi le toggle « membres peuvent modifier » écrirait
         // dans Firestore sans que l'interrupteur ne reflète le changement.
         <ShareModal deck={decks.find((d) => d.id === sharing.id) || sharing} uid={uid} groups={groups} onClose={() => setSharing(null)} />
+      )}
+
+      {foldersOpen && (
+        <FoldersModal uid={uid} folders={folders} deckTags={deckTags} onClose={() => setFoldersOpen(false)} />
+      )}
+
+      {tagDeck && (
+        <FolderPicker
+          uid={uid}
+          title="Dossiers du paquet"
+          subtitle={tagDeck.name}
+          folders={folders}
+          isOn={(id) => deckFolders(tagDeck.id).includes(id)}
+          onToggle={(id, on) => toggleDeckFolder(uid, tagDeck.id, id, on).catch((e) => console.error(e))}
+          onManage={() => { setTagDeck(null); setFoldersOpen(true); }}
+          onClose={() => setTagDeck(null)}
+        />
+      )}
+
+      {tagBulk && (
+        <FolderPicker
+          uid={uid}
+          title="Ranger la sélection"
+          subtitle={`${choisis.length} paquet${choisis.length > 1 ? "s" : ""} sélectionné${choisis.length > 1 ? "s" : ""}`}
+          folders={folders}
+          // Coché quand TOUS les paquets choisis ont déjà ce dossier ; sinon un
+          // clic l'ajoute à tous, un second le retire de tous.
+          isOn={(id) => choisis.length > 0 && choisis.every((d) => deckFolders(d.id).includes(id))}
+          onToggle={(id, on) => choisis.forEach((d) => toggleDeckFolder(uid, d.id, id, on).catch((e) => console.error(e)))}
+          onManage={() => { setTagBulk(false); setFoldersOpen(true); }}
+          onClose={() => setTagBulk(false)}
+        />
+      )}
+
+      {/* Fantôme suivant le pointeur pendant un glisser-vers-dossier.
+          pointer-events-none : indispensable pour qu'elementFromPoint « voie »
+          la puce sous le fantôme et non le fantôme lui-même. */}
+      {drag && (
+        <div
+          className="pointer-events-none fixed z-[90] flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white shadow-xl"
+          style={{ left: drag.x, top: drag.y }}
+        >
+          <Folder size={14} /> <span className="max-w-[12rem] truncate">{drag.name}</span>
+        </div>
       )}
     </Shell>
   );

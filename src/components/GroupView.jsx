@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Users, Share2, Check, Copy, Plus, LogOut, Trash2, Loader2, Sparkles, X, Eye, Crown,
+  Users, Share2, Check, Copy, Plus, LogOut, Trash2, Loader2, Sparkles, X, Eye, Crown, Folder,
 } from "lucide-react";
 import { Shell, Header, Modal, IconBtn, ConfirmModal, useBack } from "./ui";
 import {
   watchCatalog, renameGroup, leaveGroup, deleteGroup, markGroupSeen, groupSeenAt,
 } from "../lib/groups";
 import { joinDeck } from "../lib/decks";
+import { watchUserPrefs, toggleDeckFolder, tagsOf } from "../lib/folders";
+import { FolderPicker } from "./FoldersModal";
 
 /*
  * Vitrine d'un groupe : la liste des paquets qui y sont publiés. On rejoint
@@ -20,6 +22,8 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [joining, setJoining] = useState(null);
   const [membersOpen, setMembersOpen] = useState(false);
+  const [tagEntry, setTagEntry] = useState(null);   // paquet du catalogue qu'on range dans des dossiers
+  const [prefs, setPrefs] = useState({ folders: [], deckTags: {} });
 
   useBack(onBack);   // balayage à deux doigts = revenir à l'accueil
 
@@ -27,6 +31,11 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
   const seuil = useRef(groupSeenAt(group.id));
   useEffect(() => watchCatalog(group.id, setCatalog), [group.id]);
   useEffect(() => { markGroupSeen(group.id); }, [group.id]);
+  // Dossiers personnels, pour ranger un paquet du groupe sans quitter la vue.
+  useEffect(() => watchUserPrefs(uid, setPrefs), [uid]);
+  const { folders, deckTags } = prefs;
+  const folderIds = new Set(folders.map((f) => f.id));
+  const deckFolders = (id) => tagsOf(deckTags, id).filter((t) => folderIds.has(t));
 
   const isOwner = group.owner === uid;
 
@@ -107,6 +116,21 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
+                {/* Ranger ce paquet partagé dans ses dossiers perso (le rejoint
+                    au premier rangement s'il ne l'est pas encore, pour qu'il
+                    apparaisse à l'accueil sous le dossier). */}
+                <button
+                  onClick={() => setTagEntry(entry)}
+                  aria-label="Ranger dans un dossier"
+                  title="Ranger dans un dossier"
+                  className={`relative flex h-8 w-8 items-center justify-center rounded-lg transition ${
+                    deckFolders(entry.deckId).length
+                      ? "text-violet-600 hover:bg-violet-50 dark:text-violet-300 dark:hover:bg-violet-500/10"
+                      : "text-slate-400 hover:bg-slate-100 hover:text-violet-600 dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-violet-300"
+                  }`}
+                >
+                  <Folder size={16} />
+                </button>
                 <button
                   onClick={() => voir(entry)}
                   className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600"
@@ -131,6 +155,24 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
 
       {share && <GroupShareModal group={group} onClose={() => setShare(false)} />}
       {membersOpen && <GroupMembersModal group={group} uid={uid} onClose={() => setMembersOpen(false)} />}
+      {tagEntry && (
+        <FolderPicker
+          uid={uid}
+          title="Ranger dans un dossier"
+          subtitle={tagEntry.name}
+          folders={folders}
+          isOn={(id) => deckFolders(tagEntry.deckId).includes(id)}
+          onToggle={async (id, on) => {
+            try {
+              // Ajouter à un dossier un paquet pas encore rejoint le rejoint
+              // d'abord : sinon il serait étiqueté mais invisible à l'accueil.
+              if (on && !myDeckIds.has(tagEntry.deckId)) await joinDeck(tagEntry.deckId, uid, pseudo);
+              await toggleDeckFolder(uid, tagEntry.deckId, id, on);
+            } catch (e) { console.error(e); alert("Opération impossible. Réessayez."); }
+          }}
+          onClose={() => setTagEntry(null)}
+        />
+      )}
       {confirmLeave && (
         <ConfirmModal
           title="Quitter le groupe ?"

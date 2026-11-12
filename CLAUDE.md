@@ -71,6 +71,10 @@ groups/{groupId}         # groupe = catalogue de paquets
 
 groupCodes/{CODE}        # code -> groupId (rejoindre un groupe)
   groupId, name
+
+users/{uid}              # préférences PRIVÉES de l'utilisateur (jamais partagées)
+  folders: [{id, name}]              # dossiers perso (étiquettes) de l'accueil
+  deckTags: {deckId: [folderId...]}  # étiquettes d'un paquet, pour CET utilisateur
 ```
 
 - **Compteurs dénormalisés** (`cardCount`, `stats`) : évitent de lire toutes les
@@ -134,6 +138,8 @@ groupCodes/{CODE}        # code -> groupId (rejoindre un groupe)
   l'entrée `catalog` (membre du groupe requis).
 - `shareCodes`/`groupCodes` : suppression permise seulement si la cible n'existe
   plus (nettoyage sans « dé-partager » un vivant).
+- `users/{uid}` : **strictement privé** — chacun ne lit et n'écrit que son propre
+  document (dossiers perso). Rien d'autrui n'y est visible.
 - Storage : images < 100 Ko, type `image/*`.
 
 ## Structure des fichiers
@@ -146,6 +152,7 @@ src/
     decks.js             CRUD paquets/cartes, compteurs, copie, fusion, migration
     srs.js               répétition espacée (SM-2) — calcul pur, testable seul
     groups.js            groupes-catalogues + notifications (marqueur local)
+    folders.js           dossiers perso (étiquettes) : doc users/{uid}, sync + hors ligne
     image.js             compression + upload adressé par contenu (sha256)
     import.js            parseur texte Anki/Quizlet + HTML→texte balisé
     anki.js              lecture .apkg (ZIP + SQLite, formats legacy et v3 zstd)
@@ -173,6 +180,7 @@ src/
     ImportModal.jsx      import .apkg/.txt/.csv (fichier ou glisser-déposer)
     GroupView.jsx        vitrine d'un groupe (voir / rejoindre les paquets)
     GroupsModal.jsx      liste/création/jonction de groupes
+    FoldersModal.jsx     dossiers perso : FoldersModal (gérer) + FolderPicker (assigner)
   App.jsx                auth, routage des vues, accueil (tri, recherche, groupes,
                          sélection multiple, fusion, révision multi-paquets)
 scripts/purge-images.mjs script admin (firebase-admin) : purge images orphelines
@@ -213,8 +221,15 @@ cors.json                (optionnel — CORS Storage, désormais peu utile)
 - **Tri** (date d'ajout / dernière révision / nom / créateur) avec sens
   croissant/décroissant ; **recherche** paquet + créateur avec **surlignage** du
   texte trouvé (insensible aux accents)
-- Menu **« ⋮ »** par vignette (hors ligne, copier, renommer, supprimer/quitter)
+- Menu **« ⋮ »** par vignette (hors ligne, copier, **dossiers**, renommer, supprimer/quitter)
 - Raccourci « Réviser » (séance guidée recommandée), « Réviser plusieurs »
+- **Dossiers** (étiquettes) **personnels** : rangent SA liste d'accueil (barre de
+  filtres Tous/dossier/Sans dossier), un paquet peut porter plusieurs étiquettes.
+  Assignation par carte (⋮ « Dossiers… ») ou en lot (sélection → « Ranger »).
+  Stockés dans `users/{uid}` → **synchronisés** entre appareils, gérés hors ligne
+  par le cache. Distincts des **groupes** (qui, eux, sont partagés). L'uid étant
+  préservé à la liaison d'un compte anonyme, ils suivent tout seuls ; seule la
+  migration par copie devrait les réunir (à faire — voir « Reste à faire »).
 
 **Groupes (catalogues)** — voir « État de déploiement »
 - Créer / rejoindre par code ; vitrine des paquets publiés ; **Voir** (aperçu sans
@@ -275,7 +290,15 @@ firebase login
 
 ## Reste à faire / pistes
 
-- **Déployer** règles+index et **activer les fournisseurs d'auth** (voir plus haut)
+- **Déployer** règles+index et **activer les fournisseurs d'auth** (voir plus haut).
+  ⚠️ Les **dossiers perso** (`users/{uid}`) exigent `npm run deploy:rules` : sans
+  la règle déployée, les écritures sont refusées (permission-denied) et rien ne
+  persiste (l'UI apparaît mais le rangement ne « prend » pas).
+- **Fusion de comptes → dossiers** : le cas *liaison* préserve l'uid (dossiers
+  gardés d'office). Le cas *migration par copie* (uid différent) devrait réunir
+  `folders` + `deckTags` dans `applyMigration` ; **limite** : les paquets possédés
+  recréés reçoivent de nouveaux id, donc leurs étiquettes ne suivraient pas sans
+  remappage. Non implémenté pour l'instant.
 - Tester migration, inscription, Google, vérification, reset (nécessite le déploiement)
 - (option) CI GitHub Actions : secrets `VITE_*`, compte de service, `projectId`
 - (option) Code-splitting du bundle (~968 Ko) : `import()` dynamique de Firebase
