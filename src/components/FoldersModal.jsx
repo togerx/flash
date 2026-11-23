@@ -19,7 +19,18 @@ import {
 
 /* ------------------------------- Gestion ------------------------------- */
 
-export function FoldersModal({ uid, folders, deckTags, onClose }) {
+/* `ops` (facultatif) remplace les opérations sur les dossiers PERSO par d'autres
+   — ceux d'un groupe, par exemple — avec la même interface ; `intro` et
+   `footnote` adaptent les textes. Sans `ops`, ce sont les dossiers de `uid`.
+   Sans `ops.reorder`, pas de flèches (ordre imposé par l'appelant).
+   `canManage(folder)` masque renommer/supprimer sur les dossiers d'autrui. */
+export function FoldersModal({ uid, folders, deckTags, onClose, ops, intro, footnote, canManage = () => true }) {
+  const act = ops || {
+    create: (n) => createFolder(uid, n),
+    rename: (id, n) => renameFolder(uid, folders, id, n),
+    reorder: (next) => reorderFolders(uid, next),
+    remove: (id) => deleteFolder(uid, folders, deckTags, id),
+  };
   const [name, setName] = useState("");
   const [renamingId, setRenamingId] = useState(null);
   const [renameVal, setRenameVal] = useState("");
@@ -40,7 +51,7 @@ export function FoldersModal({ uid, folders, deckTags, onClose }) {
     const n = name.trim();
     if (!n || busy) return;
     setBusy(true);
-    try { await createFolder(uid, n); setName(""); }
+    try { await act.create(n); setName(""); }
     catch (e) { console.error(e); alert("Création impossible. Réessayez."); }
     finally { setBusy(false); }
   };
@@ -48,7 +59,7 @@ export function FoldersModal({ uid, folders, deckTags, onClose }) {
   const rename = async (id) => {
     const n = renameVal.trim();
     if (!n) { setRenamingId(null); return; }
-    try { await renameFolder(uid, folders, id, n); }
+    try { await act.rename(id, n); }
     catch (e) { console.error(e); alert("Renommage impossible. Réessayez."); }
     setRenamingId(null);
   };
@@ -59,11 +70,11 @@ export function FoldersModal({ uid, folders, deckTags, onClose }) {
     if (j < 0 || j >= folders.length) return;
     const next = [...folders];
     [next[i], next[j]] = [next[j], next[i]];
-    reorderFolders(uid, next).catch((e) => console.error(e));
+    act.reorder(next).catch((e) => console.error(e));
   };
 
   const remove = async (id) => {
-    try { await deleteFolder(uid, folders, deckTags, id); }
+    try { await act.remove(id); }
     catch (e) { console.error(e); alert("Suppression impossible. Réessayez."); }
     setConfirmId(null);
   };
@@ -79,8 +90,12 @@ export function FoldersModal({ uid, folders, deckTags, onClose }) {
 
       <div className="modal-body soft-scroll space-y-3 p-5">
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Les dossiers rangent <b>votre</b> liste d'accueil ; un paquet peut figurer dans
-          plusieurs dossiers. Personnels et privés — sans rapport avec les groupes partagés.
+          {intro || (
+            <>
+              Les dossiers rangent <b>votre</b> liste d'accueil ; un paquet peut figurer dans
+              plusieurs dossiers. Personnels et privés — sans rapport avec les groupes partagés.
+            </>
+          )}
         </p>
 
         {/* Créer */}
@@ -134,7 +149,7 @@ export function FoldersModal({ uid, folders, deckTags, onClose }) {
               <div key={f.id} className="flex items-center gap-2 rounded-xl bg-slate-50 px-2.5 py-2 ring-1 ring-slate-200 dark:bg-slate-800/60 dark:ring-slate-700">
                 {/* Réordonner par flèches — masqué pendant une recherche (l'index
                     ne correspondrait plus à la liste complète). */}
-                {!filtering && (
+                {!filtering && act.reorder && (
                   <div className="flex flex-col">
                     <button onClick={() => move(i, -1)} disabled={i === 0} aria-label="Monter" className="text-slate-400 transition hover:text-slate-700 disabled:opacity-30 dark:hover:text-slate-200"><ChevronUp size={14} /></button>
                     <button onClick={() => move(i, 1)} disabled={i === shown.length - 1} aria-label="Descendre" className="text-slate-400 transition hover:text-slate-700 disabled:opacity-30 dark:hover:text-slate-200"><ChevronDown size={14} /></button>
@@ -161,7 +176,7 @@ export function FoldersModal({ uid, folders, deckTags, onClose }) {
                     <button onClick={() => remove(f.id)} className="rounded-lg bg-red-600 px-2 py-1 text-xs font-semibold text-white hover:bg-red-700">Oui</button>
                     <button onClick={() => setConfirmId(null)} className="rounded-lg px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-200 dark:text-slate-400 dark:hover:bg-slate-700">Non</button>
                   </div>
-                ) : (
+                ) : canManage(f) && (
                   <div className="flex items-center gap-0.5">
                     <button onClick={() => { setRenamingId(f.id); setRenameVal(f.name); }} aria-label="Renommer" className="rounded-lg p-1.5 text-slate-400 transition hover:bg-white hover:text-slate-700 dark:hover:bg-slate-900 dark:hover:text-slate-200"><Pencil size={15} /></button>
                     <button onClick={() => setConfirmId(f.id)} aria-label="Supprimer" className="rounded-lg p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400"><Trash2 size={15} /></button>
@@ -172,7 +187,7 @@ export function FoldersModal({ uid, folders, deckTags, onClose }) {
           </div>
         )}
         <p className="text-xs text-slate-400 dark:text-slate-500">
-          Supprimer un dossier retire seulement l'étiquette des paquets ; les paquets, eux, restent.
+          {footnote || "Supprimer un dossier retire seulement l'étiquette des paquets ; les paquets, eux, restent."}
         </p>
       </div>
     </Modal>
@@ -266,5 +281,30 @@ export function FolderPicker({ uid, title, subtitle, folders, isOn, onToggle, on
         )}
       </div>
     </Modal>
+  );
+}
+
+/* ------------------------------ Filtre --------------------------------- */
+
+/* Puce de filtre par dossier (accueil et vitrine d'un groupe). `folderId` sert
+   de cible au glisser-déposer de l'accueil (data-folder-id). */
+export function FolderChip({ label, count, active, onClick, icon, folderId, dragOver }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      data-folder-id={folderId}
+      className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium ring-1 transition ${
+        dragOver
+          ? "bg-violet-100 text-violet-800 ring-2 ring-violet-500 dark:bg-violet-500/20 dark:text-violet-100"
+          : active
+            ? "bg-violet-600 text-white ring-violet-600"
+            : "bg-white text-slate-600 ring-slate-200 hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:ring-slate-600"
+      }`}
+    >
+      {icon && <Folder size={13} className={dragOver ? "text-violet-600" : active ? "text-white" : "text-violet-500"} />}
+      <span className="max-w-[10rem] truncate">{label}</span>
+      <span className={active && !dragOver ? "text-violet-200" : "text-slate-400 dark:text-slate-500"}>{count}</span>
+    </button>
   );
 }

@@ -192,15 +192,56 @@ service cloud.firestore {
         ( isMember() && changed().hasOnly(['name', 'deckCount', 'lastPublishedAt']) )
       );
 
+      // Dossiers du groupe (décision utilisateur) : tout membre en crée ; seuls
+      // le créateur du dossier et le propriétaire du groupe le renomment ou le
+      // suppriment. Le créateur enregistré ne change jamais.
+      match /folders/{folderId} {
+        function grpF() { return get(/databases/$(database)/documents/groups/$(groupId)).data; }
+        function memberF() { return request.auth.uid in grpF().members; }
+        function manager() {
+          return resource.data.createdBy == request.auth.uid || grpF().owner == request.auth.uid;
+        }
+        function validName() {
+          return request.resource.data.name is string
+            && request.resource.data.name.size() > 0
+            && request.resource.data.name.size() <= 60;
+        }
+
+        allow read: if signedIn() && memberF();
+        allow create: if signedIn() && memberF()
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.keys().hasOnly(['name', 'createdBy', 'createdAt'])
+          && validName();
+        allow update: if signedIn() && memberF() && manager()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+          && validName();
+        allow delete: if signedIn() && manager();
+      }
+
       // Entrée de catalogue : un paquet publié dans le groupe.
       match /catalog/{deckId} {
         function grp() { return get(/databases/$(database)/documents/groups/$(groupId)).data; }
         function groupMember() { return request.auth.uid in grp().members; }
 
+        // Dossier du groupe où l'auteur range son paquet : un id (texte court),
+        // ou absent (= sans dossier).
+        function validFolder() {
+          return !('folderId' in request.resource.data)
+            || (request.resource.data.folderId is string && request.resource.data.folderId.size() <= 40);
+        }
+
         allow read: if signedIn() && groupMember();
-        // Publier / mettre à jour : membre du groupe ET propriétaire du paquet.
-        allow create, update: if signedIn() && groupMember()
-          && request.resource.data.ownerUid == request.auth.uid;
+        // Publier : membre du groupe ET propriétaire du paquet.
+        allow create: if signedIn() && groupMember()
+          && request.resource.data.ownerUid == request.auth.uid
+          && validFolder();
+        // Mettre à jour (dont ranger dans un dossier) : seulement l'auteur DÉJÀ
+        // enregistré de l'entrée — sans quoi un membre pourrait réécrire
+        // l'entrée d'un autre en s'en déclarant l'auteur.
+        allow update: if signedIn() && groupMember()
+          && resource.data.ownerUid == request.auth.uid
+          && request.resource.data.ownerUid == request.auth.uid
+          && validFolder();
         allow delete: if signedIn() && groupMember()
           && resource.data.ownerUid == request.auth.uid;
       }

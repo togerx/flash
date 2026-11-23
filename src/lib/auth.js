@@ -7,6 +7,7 @@ import {
   reauthenticateWithCredential, reauthenticateWithPopup, deleteUser,
   sendEmailVerification, sendPasswordResetEmail, signOut, updateProfile, reload,
   verifyPasswordResetCode, confirmPasswordReset, applyActionCode,
+  setPersistence, indexedDBLocalPersistence, browserSessionPersistence,
 } from "firebase/auth";
 import { getApp, initializeApp, deleteApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
@@ -51,7 +52,33 @@ export function watchAuth(cb) {
 
 export const currentUser = () => auth.currentUser;
 
-export function anonSignIn() {
+/* --- « Rester connecté » ---------------------------------------------------
+   Coché (défaut) : la session est gardée sur l'appareil (IndexedDB) — c'est
+   aussi le comportement par défaut de Firebase. Décoché : la session vit dans
+   l'onglet et se ferme avec le navigateur (ordinateur partagé).
+
+   Le choix doit être appliqué AVANT la connexion. On l'applique dès l'affichage
+   de l'écran et à chaque changement de la case, et non juste avant l'appel :
+   attendre `setPersistence` avant `signInWithPopup` ferait perdre au navigateur
+   le lien avec le clic, et Safari bloquerait la fenêtre Google. */
+
+const REMEMBER_KEY = "flash.rememberMe";
+
+export function loadRememberMe() {
+  try { return localStorage.getItem(REMEMBER_KEY) !== "false"; }
+  catch { return true; }   // stockage indisponible : on garde le défaut
+}
+
+export function applyRememberMe(remember) {
+  try { localStorage.setItem(REMEMBER_KEY, remember ? "true" : "false"); } catch { /* sans effet */ }
+  return setPersistence(auth, remember ? indexedDBLocalPersistence : browserSessionPersistence);
+}
+
+/* Une session anonyme est TOUJOURS gardée sur l'appareil, quelle que soit la
+   case : ses paquets ne sont rattachés à rien d'autre, la perdre à la
+   fermeture du navigateur ferait perdre ses données pour de bon. */
+export async function anonSignIn() {
+  await setPersistence(auth, indexedDBLocalPersistence);
   return signInAnonymously(auth);
 }
 

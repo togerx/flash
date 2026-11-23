@@ -4,8 +4,10 @@ import {
   Users, Copy, GripVertical, Circle, RotateCcw, Lock, Unlock, Loader2, WifiOff,
   List, ListOrdered, Table, Search, CheckSquare, Square, FolderPlus, Sparkles, Eye,
   ChevronDown, ChevronUp, ChevronsUpDown, ChevronsDownUp,
+  ArrowDownWideNarrow, ArrowUpNarrowWide,
 } from "lucide-react";
-import { Shell, Header, Modal, IconBtn, ConfirmModal, Loading, useBack } from "./ui";
+import { Shell, Header, StickyTop, Modal, IconBtn, ConfirmModal, Loading, useBack } from "./ui";
+import { CARD_SORTS, loadCardSort, saveCardSort, sortCards, isDeckOrder } from "../lib/cardSort";
 import CropModal from "./CropModal";
 import TableModal from "./TableModal";
 import DeckProgress from "./DeckProgress";
@@ -42,6 +44,9 @@ export default function DeckView({ deck, uid, pseudo, groups = [], isMember = tr
   const [guided, setGuided] = useState(null);        // config de la séance guidée
   const [guidedSetup, setGuidedSetup] = useState(false);
   const [expandedIds, setExpandedIds] = useState(() => new Set());   // cartes dépliées (contenu complet)
+  // Tri d'affichage, personnel et mémorisé sur l'appareil (voir lib/cardSort).
+  const [cardSort, setCardSortState] = useState(loadCardSort);
+  const setCardSort = (s) => { setCardSortState(s); saveCardSort(s); };
 
   // Balayage à deux doigts vers la droite : revenir à l'accueil (les révisions et
   // modales, montées par-dessus, interceptent d'abord — voir useBack).
@@ -105,7 +110,11 @@ export default function DeckView({ deck, uid, pseudo, groups = [], isMember = tr
      ressorte comme les autres. */
   const norm = (s) => plainPreview(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   const q = norm(search).trim();
-  const shown = q ? cards.filter((c) => norm(c.rectoText).includes(q) || norm(c.versoText).includes(q)) : list;
+  const deckOrder = isDeckOrder(cardSort);
+  const found = q ? cards.filter((c) => norm(c.rectoText).includes(q) || norm(c.versoText).includes(q)) : list;
+  // Le tri ne touche que l'affichage ; en ordre du paquet, la liste reste telle
+  // quelle (c'est elle que le glisser-déposer réordonne).
+  const shown = deckOrder ? found : sortCards(found, cardSort, plainPreview);
 
   // Numéro réel dans le paquet : pendant une recherche, l'index de la liste
   // affichée ne veut plus rien dire, alors que ce numéro sert de repère (plage
@@ -113,8 +122,9 @@ export default function DeckView({ deck, uid, pseudo, groups = [], isMember = tr
   const numero = new Map(cards.map((c, i) => [c.id, i + 1]));
   // Réordonner une liste filtrée écrirait des positions calculées sur un
   // sous-ensemble : le glissement est suspendu pendant une recherche, et n'a
-  // pas de sens non plus quand on coche des cartes.
-  const canDrag = canEdit && !q && !selecting;
+  // pas de sens non plus quand on coche des cartes, ni quand un tri d'affichage
+  // montre un autre ordre que celui du paquet.
+  const canDrag = canEdit && !q && !selecting && deckOrder;
 
   /* Sélection : les cartes cochées limitent la prochaine série. Les boutons
      « Tout » et « Aucune » portent sur les cartes AFFICHÉES, donc sur les
@@ -214,6 +224,9 @@ export default function DeckView({ deck, uid, pseudo, groups = [], isMember = tr
 
   return (
     <Shell>
+      {/* En-tête collant : titre, progression, actions, sélection et tri
+          restent visibles ; la liste des cartes défile derrière. */}
+      <StickyTop>
       <Header
         title={deck.name}
         subtitle={loading ? "Chargement…" : `${cards.length} carte${cards.length > 1 ? "s" : ""}${canEdit ? "" : " · lecture seule"}`}
@@ -222,25 +235,9 @@ export default function DeckView({ deck, uid, pseudo, groups = [], isMember = tr
         right={<button onClick={() => setShare(true)} className="flex items-center gap-1.5 rounded-full bg-white dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-slate-700 dark:text-slate-300 shadow-sm ring-1 ring-slate-200 dark:ring-slate-700 hover:ring-slate-300 dark:hover:ring-slate-600"><Share2 size={15} /> Partager</button>}
       />
 
-      {!isMember && (
-        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-violet-50 px-3.5 py-3 ring-1 ring-violet-200 dark:bg-violet-500/10 dark:ring-violet-500/30">
-          <Eye size={18} className="shrink-0 text-violet-600 dark:text-violet-300" />
-          <p className="min-w-0 flex-1 text-sm text-violet-800 dark:text-violet-200">
-            Aperçu depuis un groupe. Rejoignez le paquet pour l'ajouter à vos paquets et enregistrer votre progression.
-          </p>
-          <button
-            onClick={join}
-            disabled={joining}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-violet-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-violet-700 disabled:opacity-50"
-          >
-            {joining ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Rejoindre
-          </button>
-        </div>
-      )}
-
       <DeckProgress stats={statsFromCards(cards, uid)} />
 
-      <div className="mt-5 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap gap-2">
         <button
           onClick={() => nbSelected && setSetup(true)}
           disabled={!nbSelected}
@@ -342,19 +339,67 @@ export default function DeckView({ deck, uid, pseudo, groups = [], isMember = tr
         </div>
       )}
 
-      <div className="mt-5 space-y-2.5">
-        {!loading && shown.length > 0 && (
-          <div className="flex justify-end">
+      {/* Tri d'affichage + dépli global. Le tri est personnel : il ne change
+          pas l'ordre du paquet pour les autres membres. */}
+      {!loading && cards.length > 0 && (
+        <div className="mt-3 flex items-center gap-1.5">
+          <div className="relative">
+            <ArrowDownWideNarrow size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+            <select
+              value={cardSort.key}
+              onChange={(e) => setCardSort({ key: e.target.value, dir: "asc" })}
+              aria-label="Trier les cartes"
+              className="h-10 appearance-none rounded-xl border border-slate-200 bg-white pl-9 pr-8 text-sm font-medium text-slate-700 outline-none focus-visible:border-violet-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+            >
+              {CARD_SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+            </select>
+            <ChevronDown size={14} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+          </div>
+          <button
+            onClick={() => setCardSort({ ...cardSort, dir: cardSort.dir === "asc" ? "desc" : "asc" })}
+            aria-label={cardSort.dir === "asc" ? "Tri croissant, cliquer pour décroissant" : "Tri décroissant, cliquer pour croissant"}
+            title={
+              cardSort.key === "recto" || cardSort.key === "verso"
+                ? (cardSort.dir === "asc" ? "A → Z" : "Z → A")
+                : cardSort.key === "created"
+                  ? (cardSort.dir === "asc" ? "Plus ancienne d'abord" : "Plus récente d'abord")
+                  : (cardSort.dir === "asc" ? "Du début à la fin" : "De la fin au début")
+            }
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:text-violet-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:text-violet-300"
+          >
+            {cardSort.dir === "asc" ? <ArrowUpNarrowWide size={17} /> : <ArrowDownWideNarrow size={17} />}
+          </button>
+          {shown.length > 0 && (
             <button
               onClick={toggleAllExpand}
               title={allExpanded ? "Réduire toutes les cartes" : "Voir tout le contenu de chaque carte"}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 transition hover:bg-white hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-200"
+              className="ml-auto flex h-10 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-slate-500 transition hover:bg-white hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-200"
             >
               {allExpanded ? <ChevronsDownUp size={16} /> : <ChevronsUpDown size={16} />}
               {allExpanded ? "Tout réduire" : "Tout étendre"}
             </button>
-          </div>
-        )}
+          )}
+        </div>
+      )}
+      </StickyTop>
+
+      {!isMember && (
+        <div className="mt-2 flex flex-wrap items-center gap-3 rounded-xl bg-violet-50 px-3.5 py-3 ring-1 ring-violet-200 dark:bg-violet-500/10 dark:ring-violet-500/30">
+          <Eye size={18} className="shrink-0 text-violet-600 dark:text-violet-300" />
+          <p className="min-w-0 flex-1 text-sm text-violet-800 dark:text-violet-200">
+            Aperçu depuis un groupe. Rejoignez le paquet pour l'ajouter à vos paquets et enregistrer votre progression.
+          </p>
+          <button
+            onClick={join}
+            disabled={joining}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-violet-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-violet-700 disabled:opacity-50"
+          >
+            {joining ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Rejoindre
+          </button>
+        </div>
+      )}
+
+      <div className="mt-3 space-y-2.5">
         {loading && (
           <div className="rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700 bg-white/50 dark:bg-slate-900/50">
             <Loading label="Chargement des cartes…" />

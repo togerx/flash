@@ -2,11 +2,23 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
+/* Date et heure du build (« 2026.11.22-1842 ») : permet de vérifier quelle
+   version tourne sur un téléphone (affichée dans « Mon compte »). */
+function buildStamp(now) {
+  const two = (v) => String(v).padStart(2, "0");
+  return `${now.getFullYear()}.${two(now.getMonth() + 1)}.${two(now.getDate())}-${two(now.getHours())}${two(now.getMinutes())}`;
+}
+
 export default defineConfig({
+  define: { __APP_BUILD__: JSON.stringify(buildStamp(new Date())) },
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      // Mise à jour PROPOSÉE (bandeau UpdatePrompt), jamais appliquée d'office :
+      // un rechargement forcé couperait une révision en cours. Les appareils
+      // encore sur l'ancienne version (« autoUpdate ») passent à celle-ci
+      // automatiquement une dernière fois.
+      registerType: "prompt",
       includeAssets: ["favicon.png", "apple-touch-icon.png", "logo.png"],
       manifest: {
         name: "Flash",

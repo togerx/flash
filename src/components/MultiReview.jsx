@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { enterReview } from "../lib/appUpdate";
 import { Shell, Loading, useBack } from "./ui";
 import { SessionModal } from "./DeckView";
 import Review from "./Review";
@@ -14,6 +15,8 @@ import { markReviewed } from "../lib/deckMeta";
  * paquet. L'ordre suit celui des paquets choisis, puis celui des cartes.
  */
 export default function MultiReview({ decks, uid, onExit }) {
+  // Séance en cours : le bandeau de mise à jour attend qu'elle se termine.
+  useEffect(() => enterReview(), []);
   const [cards, setCards] = useState(null);
   const [erreur, setErreur] = useState("");
   const [config, setConfig] = useState(null);

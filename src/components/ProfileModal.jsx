@@ -2,6 +2,7 @@ import { useState } from "react";
 import { X, Check, RotateCcw, Trash2, Loader2, TriangleAlert, ShieldCheck, LogOut, Mail, Lock } from "lucide-react";
 import { Modal, ConfirmModal } from "./ui";
 import { authErrorMessage, needsPasswordToReauth } from "../lib/auth";
+import AppUpdateRow from "./AppUpdateRow";
 
 /*
  * Réglages du compte : pseudo, remise à zéro de la progression, suppression.
@@ -118,6 +119,8 @@ export default function ProfileModal({ pseudo, decks, uid, account, onRename, on
               Le suivi des autres membres n'est pas touché.
             </p>
           </div>
+
+          <AppUpdateRow />
 
           <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
             <span className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Compte</span>

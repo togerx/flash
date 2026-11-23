@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Users, Share2, Check, Copy, Plus, LogOut, Trash2, Loader2, Sparkles, X, Eye, Crown, Folder,
+  FolderTree, FolderInput, ChevronDown,
 } from "lucide-react";
-import { Shell, Header, Modal, IconBtn, ConfirmModal, useBack } from "./ui";
+import { Shell, Header, StickyTop, Modal, IconBtn, ConfirmModal, useBack } from "./ui";
 import {
   watchCatalog, renameGroup, leaveGroup, deleteGroup, markGroupSeen, groupSeenAt,
+  watchGroupFolders, createGroupFolder, renameGroupFolder, deleteGroupFolder, setCatalogFolder,
 } from "../lib/groups";
 import { joinDeck } from "../lib/decks";
 import { watchUserPrefs, toggleDeckFolder, tagsOf } from "../lib/folders";
-import { FolderPicker } from "./FoldersModal";
+import { filterCatalog, countByFolder, folderOfEntry, canManageFolder, sortFolders } from "../lib/groupFolders";
+import { FolderPicker, FoldersModal, FolderChip } from "./FoldersModal";
 
 /*
  * Vitrine d'un groupe : la liste des paquets qui y sont publiés. On rejoint
@@ -39,6 +42,25 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
 
   const isOwner = group.owner === uid;
 
+  // Dossiers du groupe : tout membre en crée ; seuls leur créateur et le
+  // propriétaire du groupe les gèrent ; chacun range les paquets qu'il a
+  // publiés (voir lib/groups.js). Affichés par ordre alphabétique.
+  const [rawFolders, setRawFolders] = useState([]);
+  useEffect(() => watchGroupFolders(group.id, setRawFolders), [group.id]);
+  const groupFolders = sortFolders(rawFolders);
+  const [activeGroupFolder, setActiveGroupFolder] = useState(null);   // null=tous · "none" · id
+  const [manageGroupFolders, setManageGroupFolders] = useState(false);
+  const [classEntry, setClassEntry] = useState(null);                 // mon paquet à classer
+  // Le filtre retombe sur « Tous » si son dossier vient d'être supprimé.
+  useEffect(() => {
+    if (activeGroupFolder && activeGroupFolder !== "none" && !groupFolders.some((f) => f.id === activeGroupFolder)) {
+      setActiveGroupFolder(null);
+    }
+  }, [rawFolders]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const shownCatalog = catalog ? filterCatalog(catalog, groupFolders, activeGroupFolder) : null;
+  const counts = catalog ? countByFolder(catalog, groupFolders) : {};
+  const folderName = (entry) => groupFolders.find((f) => f.id === folderOfEntry(entry, groupFolders))?.name;
+
   const rejoindre = async (entry) => {
     setJoining(entry.deckId);
     try { await joinDeck(entry.deckId, uid, pseudo); }
@@ -54,6 +76,7 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
 
   return (
     <Shell>
+      <StickyTop>
       <Header
         home
         onHome={onBack}
@@ -73,6 +96,12 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
         >
           <Users size={16} /> {(group.members || []).length} membre{(group.members || []).length > 1 ? "s" : ""}
         </button>
+        <button
+          onClick={() => setManageGroupFolders(true)}
+          className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:ring-slate-600"
+        >
+          <FolderTree size={16} /> Dossiers
+        </button>
         {isOwner ? (
           <button onClick={() => setConfirmDelete(true)} className="ml-auto flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-slate-500 transition hover:bg-white hover:text-red-600 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-red-400">
             <Trash2 size={16} /> Supprimer le groupe
@@ -83,6 +112,25 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
           </button>
         )}
       </div>
+
+      {/* Filtre par dossier du groupe : dès qu'un dossier existe. */}
+      {catalog?.length > 0 && groupFolders.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <FolderChip label="Tous" count={catalog.length} active={activeGroupFolder === null} onClick={() => setActiveGroupFolder(null)} />
+          {groupFolders.map((f) => (
+            <FolderChip
+              key={f.id}
+              icon
+              label={f.name}
+              count={counts[f.id] || 0}
+              active={activeGroupFolder === f.id}
+              onClick={() => setActiveGroupFolder(f.id)}
+            />
+          ))}
+          <FolderChip label="Sans dossier" count={counts.none || 0} active={activeGroupFolder === "none"} onClick={() => setActiveGroupFolder("none")} />
+        </div>
+      )}
+      </StickyTop>
 
       <div className="mt-3 space-y-2.5">
         {catalog === null && (
@@ -98,8 +146,18 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
             </p>
           </div>
         )}
-        {catalog?.map((entry) => {
+        {catalog?.length > 0 && shownCatalog.length === 0 && (
+          <div className="rounded-2xl border-2 border-dashed border-slate-200 bg-white/50 py-10 text-center dark:border-slate-700 dark:bg-slate-900/50">
+            <p className="text-sm text-slate-500 dark:text-slate-400">Aucun paquet dans ce dossier.</p>
+          </div>
+        )}
+        {shownCatalog?.map((entry) => {
           const dejaMembre = myDeckIds.has(entry.deckId);
+          const mine = entry.ownerUid === uid;
+          const dossier = folderName(entry);
+          // Je ne range que MES paquets publiés (et je peux créer un dossier
+          // depuis le choix s'il n'y en a pas encore).
+          const canClass = mine;
           return (
             <div key={entry.deckId} className="flex items-center gap-3 rounded-2xl bg-white p-3.5 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
               <div className="min-w-0 flex-1">
@@ -114,6 +172,23 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
                 <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
                   par {entry.ownerPseudo || "?"} · {entry.cardCount || 0} carte{(entry.cardCount || 0) > 1 ? "s" : ""}
                 </p>
+                {/* Dossier du groupe : simple libellé, ou bouton pour l'auteur du
+                    paquet (c'est lui qui le range). */}
+                {canClass ? (
+                  <button
+                    onClick={() => setClassEntry(entry)}
+                    aria-label={dossier ? `Dossier du groupe : ${dossier}. Changer` : "Classer dans un dossier du groupe"}
+                    className="mt-1 flex max-w-full items-center gap-1 rounded-md py-0.5 text-xs font-medium text-violet-700 transition hover:text-violet-900 dark:text-violet-300 dark:hover:text-violet-100"
+                  >
+                    {dossier ? <FolderTree size={13} className="shrink-0" /> : <FolderInput size={13} className="shrink-0" />}
+                    <span className="truncate">{dossier || "Classer dans un dossier"}</span>
+                    <ChevronDown size={12} className="shrink-0" />
+                  </button>
+                ) : dossier && (
+                  <p className="mt-1 flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+                    <FolderTree size={13} className="shrink-0" /> <span className="truncate">{dossier}</span>
+                  </p>
+                )}
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
                 {/* Ranger ce paquet partagé dans ses dossiers perso (le rejoint
@@ -153,6 +228,35 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
         })}
       </div>
 
+      {manageGroupFolders && (
+        <FoldersModal
+          folders={groupFolders}
+          onClose={() => setManageGroupFolders(false)}
+          intro="Les dossiers organisent la vitrine du groupe pour tous ses membres. Chacun peut en créer, et y range lui-même les paquets qu'il a publiés."
+          footnote={isOwner
+            ? "Vous gérez tous les dossiers du groupe. En supprimer un ne supprime aucun paquet : ils repassent « sans dossier »."
+            : "Vous pouvez renommer ou supprimer les dossiers que vous avez créés. Les paquets d'un dossier supprimé repassent « sans dossier »."}
+          canManage={(f) => canManageFolder(f, uid, group)}
+          ops={{
+            create: (n) => createGroupFolder(group.id, n, uid),
+            rename: (id, n) => renameGroupFolder(group.id, id, n),
+            remove: (id) => deleteGroupFolder(group.id, id),
+          }}
+        />
+      )}
+      {classEntry && (
+        <GroupFolderPicker
+          entry={classEntry}
+          folders={groupFolders}
+          current={folderOfEntry(classEntry, groupFolders)}
+          onPick={async (folderId) => {
+            try { await setCatalogFolder(group.id, classEntry.deckId, folderId); setClassEntry(null); }
+            catch (e) { console.error(e); alert("Classement impossible. Réessayez."); }
+          }}
+          onManage={() => { setClassEntry(null); setManageGroupFolders(true); }}
+          onClose={() => setClassEntry(null)}
+        />
+      )}
       {share && <GroupShareModal group={group} onClose={() => setShare(false)} />}
       {membersOpen && <GroupMembersModal group={group} uid={uid} onClose={() => setMembersOpen(false)} />}
       {tagEntry && (
@@ -194,6 +298,65 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
         />
       )}
     </Shell>
+  );
+}
+
+/* Choix du dossier du groupe pour un de MES paquets publiés : un seul dossier
+   (c'est une vitrine), ou « Sans dossier ». Le propriétaire du groupe a un
+   raccourci vers la gestion des dossiers. */
+function GroupFolderPicker({ entry, folders, current, onPick, onManage, onClose }) {
+  const [busy, setBusy] = useState(null);
+  const pick = async (id) => {
+    if (busy) return;
+    setBusy(id ?? "none");
+    try { await onPick(id); } finally { setBusy(null); }
+  };
+  const options = [{ id: null, name: "Sans dossier" }, ...folders];
+  return (
+    <Modal onClose={onClose}>
+      <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+        <div className="min-w-0">
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
+            <FolderTree size={18} /> Dossier du groupe
+          </h2>
+          <p className="mt-0.5 truncate text-sm text-slate-500 dark:text-slate-400">{entry.name}</p>
+        </div>
+        <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800" aria-label="Fermer"><X size={20} /></button>
+      </div>
+      <div className="modal-body soft-scroll space-y-1.5 p-5">
+        {folders.length === 0 && (
+          <p className="rounded-xl bg-slate-50 px-3 py-4 text-center text-sm text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
+            Ce groupe n'a pas encore de dossier.
+          </p>
+        )}
+        {folders.length > 0 && options.map((f) => {
+          const on = current === f.id;
+          return (
+            <button
+              key={f.id ?? "none"}
+              onClick={() => pick(f.id)}
+              disabled={!!busy}
+              aria-pressed={on}
+              className={`flex min-h-[44px] w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm ring-1 transition disabled:opacity-60 ${
+                on ? "bg-violet-50 text-violet-800 ring-violet-200 dark:bg-violet-500/10 dark:text-violet-200 dark:ring-violet-500/30"
+                   : "bg-white text-slate-700 ring-slate-200 hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:ring-slate-600"
+              }`}
+            >
+              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ring-1 ${on ? "bg-violet-600 text-white ring-violet-600" : "ring-slate-300 dark:ring-slate-600"}`}>
+                {busy === (f.id ?? "none") ? <Loader2 size={12} className="animate-spin" /> : on && <Check size={12} />}
+              </span>
+              {f.id ? <Folder size={15} className={on ? "text-violet-500" : "text-slate-400"} /> : null}
+              <span className="min-w-0 flex-1 truncate font-medium">{f.name}</span>
+            </button>
+          );
+        })}
+        {onManage && (
+          <button onClick={onManage} className="pt-2 text-sm font-medium text-violet-600 transition hover:text-violet-700 dark:text-violet-400">
+            Créer ou gérer les dossiers du groupe…
+          </button>
+        )}
+      </div>
+    </Modal>
   );
 }
 

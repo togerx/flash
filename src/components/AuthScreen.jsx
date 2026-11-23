@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Mail, Lock, User, Loader2, ArrowLeft, Check } from "lucide-react";
 import { Shell, Logo } from "./ui";
-import { authErrorMessage } from "../lib/auth";
+import { authErrorMessage, loadRememberMe, applyRememberMe } from "../lib/auth";
 
 /* Icône Google (multicolore) en SVG inline. */
 function GoogleIcon({ size = 18 }) {
@@ -29,6 +29,11 @@ export default function AuthScreen({ onSignIn, onSignUp, onGoogle, onReset, onAn
   const [busy, setBusy] = useState(null);        // "email" | "google" | "anon"
   const [err, setErr] = useState("");
   const [sent, setSent] = useState(false);       // e-mail de réinitialisation envoyé
+  const [remember, setRemember] = useState(loadRememberMe);
+
+  // Appliqué dès l'affichage et à chaque changement, AVANT toute connexion
+  // (voir applyRememberMe : ne pas l'attendre au moment du clic Google).
+  useEffect(() => { applyRememberMe(remember).catch((e) => console.error(e)); }, [remember]);
 
   const run = async (kind, fn) => {
     setErr(""); setBusy(kind);
@@ -105,6 +110,18 @@ export default function AuthScreen({ onSignIn, onSignUp, onGoogle, onReset, onAn
                 <Lock size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && canSubmit && submit()} placeholder="Mot de passe" className={field} />
               </div>
+            )}
+
+            {mode !== "reset" && (
+              <label className="flex min-h-[44px] cursor-pointer select-none items-center gap-2.5 text-sm text-slate-600 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={remember}
+                  onChange={(e) => setRemember(e.target.checked)}
+                  className="h-4 w-4 shrink-0 accent-violet-600"
+                />
+                Rester connecté
+              </label>
             )}
 
             {err && <p className="text-sm text-red-600 dark:text-red-400">{err}</p>}

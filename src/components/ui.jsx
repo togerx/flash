@@ -111,6 +111,35 @@ export function Header({ title, subtitle, left, right, onHome, home }) {
   );
 }
 
+/* En-tête collant : reste en haut de l'écran pendant que la liste défile
+   DERRIÈRE lui. Il déborde du gabarit (-mx) pour que son fond couvre toute la
+   largeur, et son fond reprend celui de la page (légèrement translucide + flou)
+   pour masquer ce qui passe dessous. Une ombre n'apparaît qu'une fois collé :
+   un repère invisible placé juste avant sort de l'écran à ce moment-là. */
+export function StickyTop({ children }) {
+  const sentinel = useRef(null);
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || typeof IntersectionObserver === "undefined") return undefined;
+    const obs = new IntersectionObserver(([e]) => setStuck(!e.isIntersecting));
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+  return (
+    <>
+      <div ref={sentinel} aria-hidden="true" className="h-px" />
+      <div
+        className={`sticky top-0 z-30 -mx-4 -mt-3 bg-slate-100/95 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur transition-shadow dark:bg-slate-950/95 sm:-mx-6 sm:px-6 ${
+          stuck ? "shadow-[0_1px_0_0_rgb(226_232_240),0_4px_12px_-6px_rgb(15_23_42/0.15)] dark:shadow-[0_1px_0_0_rgb(30_41_59)]" : ""
+        }`}
+      >
+        {children}
+      </div>
+    </>
+  );
+}
+
 export function IconBtn({ children, label, onClick, danger, disabled }) {
   return (
     <button

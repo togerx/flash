@@ -19,6 +19,8 @@ recto/verso, partagés par code ou via des groupes-catalogues. Priorité forte :
 - **fflate** (dézip .apkg), **fzstd** (zstd des .apkg récents),
   **sql.js** (lecture SQLite des .apkg) — tous chargés à la demande
 - **firebase-admin** (devDependency, script d'administration uniquement)
+- **Vitest** (devDependency) : tests de la logique pure (`src/**/*.test.js`,
+  config `vitest.config.js`, sans parallélisme de fichiers)
 
 ## Environnement de dev
 
@@ -66,8 +68,12 @@ shareCodes/{CODE}        # code -> deckId (rejoindre un paquet)
 groups/{groupId}         # groupe = catalogue de paquets
   name, owner, ownerPseudo, members: [uid...], pseudos: {uid: pseudo},
   code, deckCount, lastPublishedAt, createdAt
+  folders/{folderId}     # dossier du groupe : name, createdBy, createdAt
+                         # (un doc par dossier : les règles vérifient le créateur)
   catalog/{deckId}       # entrée de vitrine (métadonnées, sans les cartes)
-    deckId, name, ownerUid, ownerPseudo, cardCount, addedAt
+    deckId, name, ownerUid, ownerPseudo, cardCount, addedAt,
+    folderId             # dossier du groupe, rangé par l'AUTEUR du paquet ; absent
+                         # ou dossier supprimé = « sans dossier » (lib/groupFolders.js)
 
 groupCodes/{CODE}        # code -> groupId (rejoindre un groupe)
   groupId, name
@@ -119,6 +125,11 @@ users/{uid}              # préférences PRIVÉES de l'utilisateur (jamais parta
     paquets **rejoints** de part et d'autre).
 - Vérification e-mail = **lien** (natif Firebase), pas un code (un code exigerait un
   backend). Réinitialisation mot de passe = lien Firebase.
+- **« Rester connecté »** (écran de connexion, coché par défaut) : coché = session gardée
+  sur l'appareil (IndexedDB, défaut Firebase) ; décoché = session d'onglet, fermée avec
+  le navigateur. Appliqué à l'affichage et au changement de la case, JAMAIS juste avant
+  `signInWithPopup` (Safari bloquerait la fenêtre Google). Une session **anonyme** est
+  toujours gardée sur l'appareil (la perdre = perdre ses paquets).
 - Connexion par **e-mail uniquement** (Firebase ne connecte pas au pseudo). Le pseudo
   reste un nom d'affichage non unique ; pour un compte permanent il vient de
   `displayName` (fait autorité, mis à jour au renommage).
@@ -140,6 +151,10 @@ users/{uid}              # préférences PRIVÉES de l'utilisateur (jamais parta
   plus (nettoyage sans « dé-partager » un vivant).
 - `users/{uid}` : **strictement privé** — chacun ne lit et n'écrit que son propre
   document (dossiers perso). Rien d'autrui n'y est visible.
+- **Dossiers de groupe** (`groups/{id}/folders`) : création par tout membre
+  (`createdBy` = soi, nom 1-60 car.) ; renommer/supprimer par le créateur ou le
+  propriétaire du groupe ; `createdBy` immuable. Entrée de catalogue : mise à jour réservée à son auteur DÉJÀ
+  enregistré (`resource.data.ownerUid`), `folderId` texte court ou absent.
 - Storage : images < 100 Ko, type `image/*`.
 
 ## Structure des fichiers
@@ -195,6 +210,10 @@ cors.json                (optionnel — CORS Storage, désormais peu utile)
 - Rejoindre par code ; quitter ; droit d'édition réglable par le propriétaire
 - Cartes recto/verso texte + image (recadrage pan/zoom + compression < 50 Ko)
 - **Réordonner** par glisser-déposer (champ `order`)
+- **Tri d'affichage** des cartes (ordre du paquet / date de création / question /
+  réponse, croissant ou décroissant) : **personnel**, ne change pas l'ordre du
+  paquet pour les autres ; mémorisé sur l'appareil (`lib/cardSort.js`). Le
+  glisser-déposer n'est actif qu'en « ordre du paquet » croissant
 - **Recherche** dans les cartes d'un paquet ; **sélection** de cartes (supprimer,
   exporter comme nouveau paquet) ; réinitialiser sa progression
 - Éditeur riche : barre d'outils **listes à puces / numérotées / tableau**,
@@ -234,6 +253,11 @@ cors.json                (optionnel — CORS Storage, désormais peu utile)
 **Groupes (catalogues)** — voir « État de déploiement »
 - Créer / rejoindre par code ; vitrine des paquets publiés ; **Voir** (aperçu sans
   rejoindre, grâce à `deck.groups` + règle de lecture) / **Rejoindre**
+- **Dossiers du groupe** (décision utilisateur) : **tout membre** en crée ; seuls
+  leur **créateur** et le **propriétaire du groupe** les renomment/suppriment ;
+  chacun range **ses propres** paquets publiés (`catalog.folderId`, un seul dossier
+  par paquet). Ordre alphabétique (pas de réordonnancement : il faudrait écrire les
+  dossiers d'autrui). Filtre par puces dans la vitrine.
 - Publier ses paquets depuis la modale de partage ; **notifications** « Nouveau »
   (comparaison `lastPublishedAt` à un marqueur `localStorage`, par appareil)
 
@@ -244,24 +268,36 @@ cors.json                (optionnel — CORS Storage, désormais peu utile)
 
 **Transverse**
 - **Thème sombre** (bascule sur l'accueil ; script anti-flash dans `index.html`)
+- **Mises à jour** (repris de Pilot Maths Trainer) : `registerType: "prompt"` — une
+  nouvelle version s'installe EN ATTENTE et le bandeau `UpdatePrompt` (monté dans
+  `main.jsx`) propose « Mettre à jour » ; jamais affiché pendant une révision
+  (`enterReview()` dans Review/GuidedReview/MultiReview). Vérif. au retour dans l'app
+  (≤ 1 fois / 15 min) et bouton « Rechercher une mise à jour » + date du build
+  (`__APP_BUILD__`) dans « Mon compte » (`AppUpdateRow`). Logique : `lib/appUpdate.js`
+  (testée). Le bandeau n'existe pas en `npm run dev` (pas de service worker) : tester
+  avec `npm run build` puis la config de prévisualisation `flash-preview` (port 4173).
 - **Hors ligne** : PWA installable, cache Firestore persistant, paquets « disponibles
   hors ligne » (préchargement cartes + images), blocage clair des actions image
   (Storage n'a pas de file d'attente)
 - **Clavier** : Échap ferme la modale du dessus (pile) et les barres de création ;
   **Entrée = bouton principal** de la modale (`data-primary`, ignoré dans les champs)
+- **En-tête collant** (`StickyTop` dans `ui.jsx`) sur l'accueil, la vue paquet et la
+  vitrine d'un groupe : titre + barre d'outils restent en haut, la liste défile derrière
 - Logo (`assets/icon.png`) partout : accueil, en-têtes (bouton retour accueil),
   favicon, icônes PWA ; animation de respiration pour les chargements
 
 ## Clés localStorage
 
 `flash.pseudo` · `flash.theme` · `flash.offlineDecks` · `flash.deckMeta`
-(dates ajout/révision) · `flash.groupSeen` (notifications groupes)
+(dates ajout/révision) · `flash.groupSeen` (notifications groupes) ·
+`flash.cardSort` (tri d'affichage des cartes) · `flash.rememberMe` (case « Rester connecté »)
 
 ## Commandes
 
 ```powershell
 npm run dev            # serveur de dev Vite
 npm run build          # build de production (dist/)
+npm test               # tests Vitest (logique pure)
 npm run deploy         # build + firebase deploy (site en ligne)
 npm run deploy:rules   # règles + index + storage (À FAIRE pour groupes/auth)
 npm run purge:images   # admin : purge images orphelines (serviceAccount.json requis)

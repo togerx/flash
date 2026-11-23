@@ -74,10 +74,14 @@ export function leaveGroup(groupId, uid) {
 }
 
 export async function deleteGroup(group) {
-  // Vide le catalogue (le groupe supprimé, ses entrées deviennent orphelines).
-  const entries = await getDocs(collection(db, "groups", group.id, "catalog"));
+  // Vide le catalogue et les dossiers (sinon orphelins une fois le groupe supprimé).
+  const [entries, folders] = await Promise.all([
+    getDocs(collection(db, "groups", group.id, "catalog")),
+    getDocs(collection(db, "groups", group.id, "folders")),
+  ]);
   const batch = writeBatch(db);
   entries.docs.forEach((d) => batch.delete(d.ref));
+  folders.docs.forEach((d) => batch.delete(d.ref));
   batch.delete(doc(db, "groups", group.id));
   await batch.commit();
   if (group.code) await deleteDoc(doc(db, "groupCodes", group.code)).catch(() => {});
@@ -128,6 +132,56 @@ export function unpublishDeck(groupId, deckId) {
   batch.update(doc(db, "groups", groupId), { deckCount: increment(-1) });
   batch.update(doc(db, "decks", deckId), { groups: arrayRemove(groupId) });
   return batch.commit();
+}
+
+/* --- Dossiers du groupe -----------------------------------------------
+   Décision utilisateur : TOUT MEMBRE crée des dossiers ; seuls leur créateur et
+   le propriétaire du groupe les renomment ou les suppriment ; chaque membre ne
+   range que les paquets qu'il a publiés.
+
+     groups/{groupId}/folders/{folderId}   name, createdBy, createdAt
+     catalog/{deckId}.folderId             id du dossier, absent = « sans dossier »
+
+   Un document par dossier (et non un tableau sur le groupe) : c'est ce qui
+   permet aux règles de vérifier le créateur de CHAQUE dossier. Affichés par
+   ordre alphabétique (sortFolders). Un paquet est dans un seul dossier du
+   groupe. Supprimer un dossier ne touche pas les entrées qui le citent — les
+   règles interdisent d'écrire l'entrée d'un autre membre : un `folderId`
+   devenu inconnu est lu comme « sans dossier » (voir groupFolders.js). */
+
+const foldersCol = (groupId) => collection(db, "groups", groupId, "folders");
+
+export function watchGroupFolders(groupId, cb) {
+  return onSnapshot(
+    foldersCol(groupId),
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    (e) => { if (e?.code !== "permission-denied") console.error("Écoute des dossiers du groupe", e); cb([]); },
+  );
+}
+
+export async function createGroupFolder(groupId, name, uid) {
+  const ref = await addDoc(foldersCol(groupId), {
+    name: name.trim(),
+    createdBy: uid,
+    createdAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+export function renameGroupFolder(groupId, folderId, name) {
+  return updateDoc(doc(db, "groups", groupId, "folders", folderId), { name: name.trim() });
+}
+
+export function deleteGroupFolder(groupId, folderId) {
+  return deleteDoc(doc(db, "groups", groupId, "folders", folderId));
+}
+
+/* Range un paquet publié dans un dossier du groupe (null = sans dossier).
+   Réservé au propriétaire du paquet (règle sur l'entrée de catalogue). */
+export function setCatalogFolder(groupId, deckId, folderId) {
+  return updateDoc(doc(db, "groups", groupId, "catalog", deckId), {
+    folderId: folderId || deleteField(),
+  });
 }
 
 /* --- Notifications (marqueur local, par appareil) --------------------- */

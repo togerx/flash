@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { enterReview } from "../lib/appUpdate";
 import {
   ArrowLeft, ChevronLeft, ChevronRight, Shuffle, RotateCcw, X, Maximize2, CheckCircle2, XCircle, Pencil,
 } from "lucide-react";
@@ -29,6 +30,8 @@ export function buildSeries(cards, uid, { from, to, order, count, filter, ids: o
 }
 
 export default function Review({ deck, cards, uid, config, onExit, onHome, onNewSeries, onEdit, editing }) {
+  // Séance en cours : le bandeau de mise à jour attend qu'elle se termine.
+  useEffect(() => enterReview(), []);
   const [series, setSeries] = useState(() => buildSeries(cards, uid, config));
   const [pos, setPos] = useState(0);
   const [flipped, setFlipped] = useState(false);

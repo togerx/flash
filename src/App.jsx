@@ -6,7 +6,7 @@ import {
   ShieldCheck, Mail, Share2, Folder, GripVertical,
 } from "lucide-react";
 import { useTheme } from "./lib/theme";
-import { Shell, Header, ConfirmModal, Logo, Loading, Modal, Highlight } from "./components/ui";
+import { Shell, Header, StickyTop, ConfirmModal, Logo, Loading, Modal, Highlight } from "./components/ui";
 import DeckView from "./components/DeckView";
 import DeckProgress from "./components/DeckProgress";
 import ImportModal from "./components/ImportModal";
@@ -18,7 +18,7 @@ import AuthScreen from "./components/AuthScreen";
 import AuthAction from "./components/AuthAction";
 import LinkAccountModal from "./components/LinkAccountModal";
 import ShareModal from "./components/ShareModal";
-import { FoldersModal, FolderPicker } from "./components/FoldersModal";
+import { FoldersModal, FolderPicker, FolderChip } from "./components/FoldersModal";
 import { watchUserPrefs, toggleDeckFolder, tagsOf } from "./lib/folders";
 import { isOfflineDeck, prefetchDeck, forgetDeck } from "./lib/offline";
 import {
@@ -606,27 +606,6 @@ function DeckMenu({ deck, uid, copying, onShare, onCopy, onRename, onDelete, onL
 /* Puce de filtre par dossier (barre d'accueil). Sert aussi de CIBLE de dépôt
    quand on fait glisser un paquet : `folderId` la rend repérable par
    elementFromPoint, `dragOver` la met en évidence sous le doigt/curseur. */
-function FolderChip({ label, count, active, onClick, icon, folderId, dragOver }) {
-  return (
-    <button
-      onClick={onClick}
-      aria-pressed={active}
-      data-folder-id={folderId}
-      className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium ring-1 transition ${
-        dragOver
-          ? "bg-violet-100 text-violet-800 ring-2 ring-violet-500 dark:bg-violet-500/20 dark:text-violet-100"
-          : active
-            ? "bg-violet-600 text-white ring-violet-600"
-            : "bg-white text-slate-600 ring-slate-200 hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:ring-slate-600"
-      }`}
-    >
-      {icon && <Folder size={13} className={dragOver ? "text-violet-600" : active ? "text-white" : "text-violet-500"} />}
-      <span className="max-w-[10rem] truncate">{label}</span>
-      <span className={active && !dragOver ? "text-violet-200" : "text-slate-400 dark:text-slate-500"}>{count}</span>
-    </button>
-  );
-}
-
 function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onResetAll, onDeleteAccount, onLinkAccount, onSignOut, onSendVerification, onRefreshUser, onOpen, onMultiReview, onMerge, groups, onOpenGroups, onCreate, onRename, onDelete, onCopy, onLeave, onImport, onJoin }) {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -760,6 +739,9 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
 
   return (
     <Shell>
+      {/* En-tête collant : titre, actions, recherche/tri et dossiers restent
+          visibles ; la liste des paquets défile derrière. */}
+      <StickyTop>
       <Header
         home
         title="Mes paquets"
@@ -781,11 +763,6 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
           </div>
         }
       />
-
-      {account?.isAnonymous && <SecureBanner onLink={onLinkAccount} />}
-      {account && !account.isAnonymous && account.hasPassword && !account.emailVerified && (
-        <VerifyBanner email={account.email} onSend={onSendVerification} onRefresh={onRefreshUser} />
-      )}
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button onClick={() => setCreating(true)} className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 font-semibold text-white transition hover:bg-violet-700"><Plus size={17} /> Nouveau paquet</button>
@@ -910,8 +887,16 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
           />
         </div>
       )}
+      </StickyTop>
 
-      <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {/* Bandeaux de compte : hors de l'en-tête collant pour ne pas grignoter
+          la hauteur d'écran en permanence. */}
+      {account?.isAnonymous && <SecureBanner onLink={onLinkAccount} />}
+      {account && !account.isAnonymous && account.hasPassword && !account.emailVerified && (
+        <VerifyBanner email={account.email} onSend={onSendVerification} onRefresh={onRefreshUser} />
+      )}
+
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
         {picking && (
           <div className="col-span-full flex flex-wrap items-center gap-2 rounded-xl bg-violet-50 px-3 py-2 ring-1 ring-violet-200 dark:bg-violet-500/10 dark:ring-violet-500/30">
             <span className="text-sm font-medium text-violet-800 dark:text-violet-200">

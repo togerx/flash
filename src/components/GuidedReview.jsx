@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { enterReview } from "../lib/appUpdate";
 import { ArrowLeft, X, CheckCircle2, Sparkles, Flame, Pencil } from "lucide-react";
 import { Shell, HomeLogo, useBack } from "./ui";
 import SwipeCard from "./SwipeCard";
@@ -18,6 +19,8 @@ import {
  * immédiatement. Sinon une séance de dix cartes durerait dix minutes de montre.
  */
 export default function GuidedReview({ deck, cards, uid, config, onExit, onHome, onEdit, editing }) {
+  // Séance en cours : le bandeau de mise à jour attend qu'elle se termine.
+  useEffect(() => enterReview(), []);
   const [file, setFile] = useState(
     () => seance(cards, uid, { maxNouvelles: config.count }).slice(0, config.count).map((c) => ({ id: c.id, due: 0 })));
   const [flipped, setFlipped] = useState(false);
