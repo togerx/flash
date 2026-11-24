@@ -287,24 +287,38 @@ export function FolderPicker({ uid, title, subtitle, folders, isOn, onToggle, on
 /* ------------------------------ Filtre --------------------------------- */
 
 /* Puce de filtre par dossier (accueil et vitrine d'un groupe). `folderId` sert
-   de cible au glisser-déposer de l'accueil (data-folder-id). */
-export function FolderChip({ label, count, active, onClick, icon, folderId, dragOver }) {
+   de cible au glisser-déposer d'un paquet (data-folder-id).
+
+   La puce est un CONTENEUR : le bouton de filtre et, pour le dossier
+   sélectionné de l'accueil, ses `actions` (renommer, supprimer) en sont des
+   frères — un bouton ne peut pas en contenir un autre. `pressProps` reçoit les
+   gestionnaires d'appui long (déplacer le dossier) ; `lifted` le met en avant
+   pendant qu'il est déplacé. */
+export function FolderChip({ label, count, active, onClick, icon, folderId, dragOver, actions, pressProps, lifted }) {
   return (
-    <button
-      onClick={onClick}
-      aria-pressed={active}
+    <span
       data-folder-id={folderId}
-      className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium ring-1 transition ${
-        dragOver
-          ? "bg-violet-100 text-violet-800 ring-2 ring-violet-500 dark:bg-violet-500/20 dark:text-violet-100"
-          : active
-            ? "bg-violet-600 text-white ring-violet-600"
-            : "bg-white text-slate-600 ring-slate-200 hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:ring-slate-600"
+      {...pressProps}
+      className={`flex select-none items-center rounded-full text-sm font-medium ring-1 transition [-webkit-touch-callout:none] ${
+        lifted
+          ? "z-10 scale-105 bg-violet-100 text-violet-800 shadow-lg ring-2 ring-violet-500 dark:bg-violet-500/25 dark:text-violet-100"
+          : dragOver
+            ? "bg-violet-100 text-violet-800 ring-2 ring-violet-500 dark:bg-violet-500/20 dark:text-violet-100"
+            : active
+              ? "bg-violet-600 text-white ring-violet-600"
+              : "bg-white text-slate-600 ring-slate-200 hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:ring-slate-600"
       }`}
     >
-      {icon && <Folder size={13} className={dragOver ? "text-violet-600" : active ? "text-white" : "text-violet-500"} />}
-      <span className="max-w-[10rem] truncate">{label}</span>
-      <span className={active && !dragOver ? "text-violet-200" : "text-slate-400 dark:text-slate-500"}>{count}</span>
-    </button>
+      <button
+        onClick={onClick}
+        aria-pressed={active}
+        className={`flex items-center gap-1.5 rounded-full py-1.5 pl-3 ${actions ? "pr-1.5" : "pr-3"}`}
+      >
+        {icon && <Folder size={13} className={lifted || dragOver ? "text-violet-600" : active ? "text-white" : "text-violet-500"} />}
+        <span className="max-w-[10rem] truncate">{label}</span>
+        <span className={active && !dragOver && !lifted ? "text-violet-200" : "text-slate-400 dark:text-slate-500"}>{count}</span>
+      </button>
+      {actions && <span className="flex items-center pr-1">{actions}</span>}
+    </span>
   );
 }

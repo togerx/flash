@@ -182,7 +182,12 @@ src/
                          useEnterAction
     AuthScreen.jsx       écran non connecté (login/signup/google/reset/anonyme)
     LinkAccountModal.jsx rattacher un compte à une session anonyme
-    ProfileModal.jsx     pseudo, compte (connexion/déconnexion), reset, suppression
+    NavLayout.jsx        navigation principale : onglets Paquets · Groupes · Compte
+                         (barre du bas < 768 px, barre latérale ≥ 768 px)
+    AccountPage.jsx      page Compte : pseudo, connexion, thème, mises à jour,
+                         reset, suppression (ex-fenêtre « Mon compte »)
+    AppUpdateRow.jsx     « Rechercher une mise à jour » + date du build
+    UpdatePrompt.jsx     bandeau « nouvelle version disponible »
     DeckView.jsx         cartes d'un paquet : éditeur, recherche, sélection,
                          partage, publication en groupe, révision libre/guidée
     Review.jsx           révision libre (série paramétrée, clavier, animations)
@@ -194,7 +199,7 @@ src/
     DeckProgress.jsx     barre apprises/à revoir/non vues (survol chiffré)
     ImportModal.jsx      import .apkg/.txt/.csv (fichier ou glisser-déposer)
     GroupView.jsx        vitrine d'un groupe (voir / rejoindre les paquets)
-    GroupsModal.jsx      liste/création/jonction de groupes
+    GroupsPage.jsx       page Groupes : liste/création/jonction (ex-fenêtre)
     FoldersModal.jsx     dossiers perso : FoldersModal (gérer) + FolderPicker (assigner)
   App.jsx                auth, routage des vues, accueil (tri, recherche, groupes,
                          sélection multiple, fusion, révision multi-paquets)
@@ -214,6 +219,13 @@ cors.json                (optionnel — CORS Storage, désormais peu utile)
   réponse, croissant ou décroissant) : **personnel**, ne change pas l'ordre du
   paquet pour les autres ; mémorisé sur l'appareil (`lib/cardSort.js`). Le
   glisser-déposer n'est actif qu'en « ordre du paquet » croissant
+- **Tri derrière UN bouton icône** (`SortMenu.jsx`, accueil ET vue paquet, à côté de
+  la recherche) : menu « Trier par » puis « Ordre », coche sur le choix courant ;
+  choisir referme ; ferme aussi au clic à côté et à Échap (pile `useEscapeClose` :
+  le glissé entre onglets est suspendu pendant qu'il est ouvert) ; ↑ ↓ au clavier
+- **Sélection de cartes par appui long** (plus de bouton « Sélectionner ») : coche
+  la carte ; ensuite chaque toucher coche/décoche (calque : ni édition ni suivi par
+  erreur) ; sortie par ✕, Échap ou en décochant la dernière
 - **Recherche** dans les cartes d'un paquet ; **sélection** de cartes (supprimer,
   exporter comme nouveau paquet) ; réinitialiser sa progression
 - Éditeur riche : barre d'outils **listes à puces / numérotées / tableau**,
@@ -241,10 +253,30 @@ cors.json                (optionnel — CORS Storage, désormais peu utile)
   croissant/décroissant ; **recherche** paquet + créateur avec **surlignage** du
   texte trouvé (insensible aux accents)
 - Menu **« ⋮ »** par vignette (hors ligne, copier, **dossiers**, renommer, supprimer/quitter)
-- Raccourci « Réviser » (séance guidée recommandée), « Réviser plusieurs »
+- Raccourci « Réviser » (séance guidée recommandée)
+- **Affichage liste / grille compacte** (`ViewToggle.jsx` + `lib/deckView.js`), sur
+  l'accueil (à côté du tri) ET la vitrine d'un groupe (barre d'outils) ; préférence
+  de l'appareil COMMUNE aux deux listes. Liste = une vignette complète par ligne
+  (défaut). Grille = 2 vignettes par ligne (3 dès 640 px) : nom, cartes,
+  progression ; toucher = ouvrir (accueil) / Voir (groupe) ; ⋮ (accueil) ou
+  « + » Rejoindre (groupe) en coin. Pas de poignée de rangement, de raccourci
+  « Réviser » ni de « Classer » en grille (passer en liste, ou ⋮ / sélection).
+- **Sélection par appui long** sur une vignette (plus de bouton « Sélectionner ») :
+  coche ce paquet ; ensuite chaque toucher coche/décoche (calque par-dessus la
+  vignette : rien ne s'ouvre). Barre d'actions (Réviser, Fusionner, Ranger, tout
+  cocher) **dans l'en-tête collant** ; on sort par ✕, Échap, ou en décochant le
+  dernier. Appui long : `lib/longPress.js` (450 ms, 8 px de tolérance ; avale le
+  clic suivant et le menu contextuel ; ignore `[data-no-longpress]` et les champs).
 - **Dossiers** (étiquettes) **personnels** : rangent SA liste d'accueil (barre de
   filtres Tous/dossier/Sans dossier), un paquet peut porter plusieurs étiquettes.
   Assignation par carte (⋮ « Dossiers… ») ou en lot (sélection → « Ranger »).
+  **Gérés sur place** dans la barre de puces (plus de bouton/fenêtre « Dossiers ») :
+  **+** en fin de liste crée un dossier ; le dossier **sélectionné** porte ses icônes
+  **renommer** (saisie sur place) et **supprimer** (confirmation) ; **appui long** sur
+  une puce puis glisser = la **déplacer** (ordre affiché en direct, enregistré au
+  relâchement ; `moveId` dans `lib/listOrder.js`, testé). La barre a
+  `data-no-tab-swipe` et un écouteur `touchmove` NON passif posé d'avance (sinon le
+  navigateur défile et coupe le glisser).
   Stockés dans `users/{uid}` → **synchronisés** entre appareils, gérés hors ligne
   par le cache. Distincts des **groupes** (qui, eux, sont partagés). L'uid étant
   préservé à la liaison d'un compte anonyme, ils suivent tout seuls ; seule la
@@ -267,7 +299,31 @@ cors.json                (optionnel — CORS Storage, désormais peu utile)
 - Bannières « sécuriser le compte » (anonyme) et « vérifier l'e-mail »
 
 **Transverse**
-- **Thème sombre** (bascule sur l'accueil ; script anti-flash dans `index.html`)
+- **Navigation** (`NavLayout`, décisions utilisateur) : 3 onglets **Paquets · Groupes ·
+  Compte**. Moins de 768 px de large (téléphone, même tourné) : **barre d'onglets en
+  bas** ; à partir de 768 px (tablette, ordinateur) : **barre latérale** (224 px).
+  Visible partout (aussi dans un paquet ou un groupe) **sauf pendant une révision**
+  (signal `enterReview()`). Changer d'onglet ramène à sa racine. Un paquet ouvert
+  depuis un groupe garde la vitrine « dessous » : « retour » y ramène. Le contenu
+  reste au même endroit de l'arbre React (seules les classes changent) : démonter la
+  vue paquet au début d'une révision perdrait son état. `html.has-app-nav` +
+  variables `--nav-bottom` / `--nav-left` (index.css) : hauteur des pages
+  (`.min-h-page`) et position du bandeau de mise à jour.
+- **Gestes entre onglets** (repris de **Darts Scorer**, `lib/tabSwipe.js` pur et testé
+  + `lib/useTabSwipe.js`) : **glissé long** gauche/droite (30 % de la largeur, ou
+  lancé franc ≥ 15 %) ; la page suit le doigt, une **pastille** annonce l'onglet visé
+  et se remplit au seuil (vibration légère), résistance au bout de la barre ; la
+  **barrette** de la barre du bas suit le doigt (`--tab-drag`) ; l'icône active se
+  soulève ; au tap, l'onglet arrive du côté de son icône. Événements **tactiles**
+  passifs (pas pointeurs), contenu en `touch-action: pan-y pinch-zoom`. **Désactivé**
+  si une fenêtre ou une sous-page est ouverte (`hasOpenLayer()` dans ui.jsx), depuis le
+  bord gauche (24 px), dans les champs et `[data-no-tab-swipe]`. ⚠️ La coquille porte
+  un groupe Tailwind **nommé** (`group/nav`) : un simple `group` faisait apparaître
+  toutes les infobulles `group-hover` des descendants au survol de la page.
+- **Page Paquets sans barre de défilement** (classe `no-scrollbar` sur `<html>`, comme
+  l'accueil de Darts Scorer). En-têtes collants : **pas de filet**, une ombre douce
+  seulement quand la liste passe dessous.
+- **Thème sombre** (bascule dans l'onglet Compte ; script anti-flash dans `index.html`)
 - **Mises à jour** (repris de Pilot Maths Trainer) : `registerType: "prompt"` — une
   nouvelle version s'installe EN ATTENTE et le bandeau `UpdatePrompt` (monté dans
   `main.jsx`) propose « Mettre à jour » ; jamais affiché pendant une révision
@@ -290,7 +346,8 @@ cors.json                (optionnel — CORS Storage, désormais peu utile)
 
 `flash.pseudo` · `flash.theme` · `flash.offlineDecks` · `flash.deckMeta`
 (dates ajout/révision) · `flash.groupSeen` (notifications groupes) ·
-`flash.cardSort` (tri d'affichage des cartes) · `flash.rememberMe` (case « Rester connecté »)
+`flash.cardSort` (tri d'affichage des cartes) · `flash.rememberMe` (case « Rester connecté ») ·
+`flash.deckView` (listes de paquets : `list` | `grid`)
 
 ## Commandes
 
