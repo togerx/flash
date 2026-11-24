@@ -40,7 +40,10 @@ export default function UpdatePrompt() {
   return (
     <div
       role="status"
-      className="fixed inset-x-0 bottom-0 z-[60] mx-auto max-w-md px-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+      // Au-dessus de la barre d'onglets / à droite de la barre latérale quand
+      // elles sont affichées (variables posées par NavLayout, voir index.css).
+      style={{ bottom: "var(--nav-bottom)", left: "var(--nav-left)" }}
+      className="update-prompt fixed right-0 z-[60] mx-auto max-w-md px-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
     >
       <div className="flex items-center gap-3 rounded-2xl bg-slate-900 p-3 pl-4 text-white shadow-lg ring-1 ring-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:ring-slate-200">
         {!needRefresh && <WifiOff size={18} className="shrink-0 opacity-70" aria-hidden="true" />}

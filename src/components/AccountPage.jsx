@@ -1,18 +1,22 @@
 import { useState } from "react";
-import { X, Check, RotateCcw, Trash2, Loader2, TriangleAlert, ShieldCheck, LogOut, Mail, Lock } from "lucide-react";
-import { Modal, ConfirmModal } from "./ui";
+import { Check, RotateCcw, Trash2, Loader2, TriangleAlert, ShieldCheck, LogOut, Mail, Lock, Sun, Moon } from "lucide-react";
+import { Shell, Header, StickyTop, ConfirmModal } from "./ui";
+import { useTheme } from "../lib/theme";
 import { authErrorMessage, needsPasswordToReauth } from "../lib/auth";
 import AppUpdateRow from "./AppUpdateRow";
 
 /*
- * Réglages du compte : pseudo, remise à zéro de la progression, suppression.
+ * Page « Compte » (onglet de la navigation) : pseudo, connexion, thème,
+ * mises à jour, remise à zéro de la progression, suppression du compte.
+ * Était une fenêtre (« Mon compte ») avant la barre de navigation.
  *
  * Le compte est anonyme et lié à ce navigateur : le supprimer est définitif,
  * d'où une confirmation qui énumère ce qui va disparaître plutôt qu'un vague
  * « êtes-vous sûr ».
  */
-export default function ProfileModal({ pseudo, decks, uid, account, onRename, onResetAll, onDelete, onLinkAccount, onSignOut, onClose }) {
+export default function AccountPage({ pseudo, decks, uid, account, onRename, onResetAll, onDelete, onLinkAccount, onSignOut }) {
   const [name, setName] = useState(pseudo);
+  const [theme, toggleTheme] = useTheme();
   const [busy, setBusy] = useState(null);          // "reset" | "delete"
   const [confirm, setConfirm] = useState(null);    // "reset" | "delete"
   const [pwd, setPwd] = useState("");              // mot de passe pour confirmer la suppression
@@ -29,7 +33,6 @@ export default function ProfileModal({ pseudo, decks, uid, account, onRename, on
   const saveName = () => {
     const v = name.trim();
     if (v && v !== pseudo) onRename(v);
-    onClose();
   };
 
   /* La fenêtre de confirmation reste ouverte pendant l'opération et affiche
@@ -48,13 +51,12 @@ export default function ProfileModal({ pseudo, decks, uid, account, onRename, on
 
   return (
     <>
-      <Modal onClose={onClose}>
-        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 dark:border-slate-800 px-5 py-4">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Mon compte</h2>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Fermer"><X size={20} /></button>
-        </div>
+      <Shell>
+        <StickyTop>
+          <Header home title="Compte" subtitle={pseudo} />
+        </StickyTop>
 
-        <div className="modal-body soft-scroll space-y-5 p-5">
+        <div className="mt-2 space-y-5 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
           <div>
             <span className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Pseudo</span>
             <div className="mt-1.5 flex gap-2">
@@ -120,6 +122,17 @@ export default function ProfileModal({ pseudo, decks, uid, account, onRename, on
             </p>
           </div>
 
+          <div className="border-t border-slate-100 pt-4 dark:border-slate-800">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Affichage</span>
+            <button
+              onClick={toggleTheme}
+              className="mt-1.5 flex min-h-[44px] w-full items-center gap-2 rounded-xl bg-white px-4 py-2.5 font-medium text-slate-800 ring-1 ring-slate-200 transition hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700 dark:hover:ring-slate-600"
+            >
+              {theme === "dark" ? <Sun size={16} className="shrink-0" aria-hidden="true" /> : <Moon size={16} className="shrink-0" aria-hidden="true" />}
+              <span className="flex-1 text-left">{theme === "dark" ? "Passer en thème clair" : "Passer en thème sombre"}</span>
+            </button>
+          </div>
+
           <AppUpdateRow />
 
           <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
@@ -142,7 +155,7 @@ export default function ProfileModal({ pseudo, decks, uid, account, onRename, on
             </p>
           </div>
         </div>
-      </Modal>
+      </Shell>
 
       {confirm === "reset" && (
         <ConfirmModal

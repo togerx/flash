@@ -80,7 +80,7 @@ export function Shell({ children, centered, dark, fit }) {
     // `fit` : la vue tient dans la hauteur RÉELLEMENT visible du navigateur
     // (`svh`), pas `100vh` (qui inclut la zone sous la barre d'adresse mobile et
     // forçait à scroller en révision). Le contenu se répartit dans cette hauteur.
-    <div className={`${bg} ${fit ? "flex h-[100svh] flex-col" : "min-h-screen"}`}>
+    <div className={`${bg} ${fit ? "flex h-[100svh] flex-col" : "min-h-page"}`}>
       {/* Les révisions et les modifications de texte continuent hors ligne : le
           bandeau informe sans alarmer, seules les images demandent le réseau. */}
       {!online && (
@@ -89,7 +89,7 @@ export function Shell({ children, centered, dark, fit }) {
         </div>
       )}
       <div className={`mx-auto flex w-full max-w-3xl flex-col px-4 sm:px-6 ${
-        fit ? "min-h-0 flex-1 py-3 sm:py-6" : "min-h-screen py-6"
+        fit ? "min-h-0 flex-1 py-3 sm:py-6" : "min-h-page py-6"
       } ${centered ? "items-center justify-center" : ""}`}>
         {children}
       </div>
@@ -131,7 +131,8 @@ export function StickyTop({ children }) {
       <div ref={sentinel} aria-hidden="true" className="h-px" />
       <div
         className={`sticky top-0 z-30 -mx-4 -mt-3 bg-slate-100/95 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur transition-shadow dark:bg-slate-950/95 sm:-mx-6 sm:px-6 ${
-          stuck ? "shadow-[0_1px_0_0_rgb(226_232_240),0_4px_12px_-6px_rgb(15_23_42/0.15)] dark:shadow-[0_1px_0_0_rgb(30_41_59)]" : ""
+          // Pas de filet : une ombre douce, seulement quand la liste passe dessous.
+          stuck ? "shadow-[0_6px_14px_-8px_rgb(15_23_42/0.25)] dark:shadow-[0_6px_14px_-8px_rgb(0_0_0/0.7)]" : ""
         }`}
       >
         {children}
@@ -228,6 +229,10 @@ const backStack = [];
    pour qu'un balayage démarré dans cette bande soit un « retour », et non un
    balayage de carte. */
 export const EDGE_ZONE = 24;
+
+/* Vrai si une fenêtre (modale) ou une sous-page (paquet, groupe) est ouverte :
+   le glissé entre onglets est alors désactivé (voir lib/useTabSwipe.js). */
+export const hasOpenLayer = () => escStack.length > 0 || backStack.length > 0;
 
 export function useBack(onBack) {
   useEffect(() => {

@@ -1,25 +1,31 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Plus, Play, Pencil, Trash2, Check, X, Users, LogIn, LogOut, Copy, Upload,
-  Download, HardDriveDownload, Loader2, Sun, Moon, Sparkles, CheckSquare,
-  Search, ArrowDownWideNarrow, ArrowUpNarrowWide, GitMerge, MoreVertical,
+  Download, HardDriveDownload, Loader2, Sparkles,
+  Search, GitMerge, MoreVertical,
   ShieldCheck, Mail, Share2, Folder, GripVertical,
 } from "lucide-react";
-import { useTheme } from "./lib/theme";
 import { Shell, Header, StickyTop, ConfirmModal, Logo, Loading, Modal, Highlight } from "./components/ui";
 import DeckView from "./components/DeckView";
 import DeckProgress from "./components/DeckProgress";
 import ImportModal from "./components/ImportModal";
-import ProfileModal from "./components/ProfileModal";
+import AccountPage from "./components/AccountPage";
 import MultiReview from "./components/MultiReview";
-import GroupsModal from "./components/GroupsModal";
+import GroupsPage from "./components/GroupsPage";
+import NavLayout from "./components/NavLayout";
+import SortMenu from "./components/SortMenu";
+import ViewToggle, { useDeckView } from "./components/ViewToggle";
 import GroupView from "./components/GroupView";
 import AuthScreen from "./components/AuthScreen";
 import AuthAction from "./components/AuthAction";
 import LinkAccountModal from "./components/LinkAccountModal";
 import ShareModal from "./components/ShareModal";
-import { FoldersModal, FolderPicker, FolderChip } from "./components/FoldersModal";
-import { watchUserPrefs, toggleDeckFolder, tagsOf } from "./lib/folders";
+import { FolderPicker, FolderChip } from "./components/FoldersModal";
+import {
+  watchUserPrefs, toggleDeckFolder, tagsOf, createFolder, renameFolder, reorderFolders, deleteFolder,
+} from "./lib/folders";
+import { useLongPress } from "./lib/longPress";
+import { moveId, sameOrder } from "./lib/listOrder";
 import { isOfflineDeck, prefetchDeck, forgetDeck } from "./lib/offline";
 import {
   watchDecks, createDeck, renameDeck, deleteDeck, joinByCode, joinDeck, copyDeck, leaveDeck,
@@ -49,7 +55,8 @@ export default function App() {
   const [multi, setMulti] = useState(null);   // paquets d'une révision commune
   const [preview, setPreview] = useState(null);   // paquet consulté sans l'avoir rejoint
   const [groups, setGroups] = useState([]);
-  const [groupsOpen, setGroupsOpen] = useState(false);
+  // Onglet de la navigation principale (NavLayout) : decks | groups | account.
+  const [tab, setTab] = useState("decks");
   const [openGroupId, setOpenGroupId] = useState(null);
   const [linking, setLinking] = useState(false);   // modale « ajouter un compte »
   // Lien e-mail Firebase (réinitialisation / vérification) arrivant sur l'app.
@@ -69,6 +76,8 @@ export default function App() {
   const resumedRef = useRef(false);
 
   useEffect(() => watchAuth(setAuthUser), []);
+  // Retour à « Paquets » quand l'utilisateur change (connexion, déconnexion).
+  useEffect(() => { setTab("decks"); setOpenId(null); setOpenGroupId(null); }, [authUser?.uid]);
   // Un compte permanent porte son pseudo dans displayName : il fait autorité.
   useEffect(() => {
     if (authUser?.displayName) savePseudo(authUser.displayName);
@@ -336,22 +345,32 @@ export default function App() {
   }
   if (multi) return <MultiReview decks={multi} uid={uid} onExit={() => setMulti(null)} />;
 
-  const openGroup = groups.find((g) => g.id === openGroupId);
-  if (openGroup) {
-    return (
-      <GroupView
-        group={openGroup}
-        uid={uid}
-        pseudo={pseudo}
-        myDeckIds={new Set(decks.map((d) => d.id))}
-        onBack={() => setOpenGroupId(null)}
-        onOpenDeck={(id) => { setOpenGroupId(null); setOpenId(id); }}
-      />
-    );
-  }
+  // Actions du compte (page Compte ; la liaison sert aussi aux bandeaux de l'accueil).
+  const onRenamePseudo = async (p) => { savePseudo(p); await setDisplayName(p).catch(() => {}); await renamePseudo(decks, uid, p); };
+  const onResetAll = () => resetAllProgress(decks, uid);
+  const onDeleteAccount = async (password) => {
+    await deleteAccount(decks, uid, password);
+    localStorage.removeItem(PSEUDO_KEY);
+    localStorage.removeItem("flash.offlineDecks");
+    setPseudo("");
+    setPseudoDraft("");
+  };
+  const onLinkAccount = () => setLinking(true);
+  const onSignOut = async () => { await signOutUser(); localStorage.removeItem(PSEUDO_KEY); setPseudo(""); };
 
+  // Changer d'onglet ramène à la racine de l'onglet (referme paquet / groupe).
+  const goTab = (t) => {
+    setTab(t); setOpenId(null); setOpenGroupId(null);
+    window.scrollTo(0, 0);
+  };
+
+  /* Écran affiché dans la navigation. Priorité : un paquet ouvert — même depuis
+     un groupe, dont la vitrine reste « dessous » : « retour » y ramène —, puis
+     un groupe ouvert, puis la racine de l'onglet actif. */
+  const openGroup = groups.find((g) => g.id === openGroupId);
+  let screen;
   if (open) {
-    return (
+    screen = (
       <DeckView
         deck={open}
         uid={uid}
@@ -365,52 +384,70 @@ export default function App() {
         onExportSelection={(name, ids) => copyDeck(open, uid, pseudo, { name, ids })}
       />
     );
+  } else if (openGroup) {
+    screen = (
+      <GroupView
+        group={openGroup}
+        uid={uid}
+        pseudo={pseudo}
+        myDeckIds={new Set(decks.map((d) => d.id))}
+        onBack={() => setOpenGroupId(null)}
+        onOpenDeck={(id) => setOpenId(id)}
+      />
+    );
+  } else if (tab === "groups") {
+    screen = (
+      <GroupsPage
+        groups={groups}
+        onOpen={(id) => setOpenGroupId(id)}
+        onCreate={async (name) => { await createGroup(name, uid, pseudo); }}
+        onJoin={async (code) => { await joinGroupByCode(code, uid, pseudo); }}
+      />
+    );
+  } else if (tab === "account") {
+    screen = (
+      <AccountPage
+        pseudo={pseudo}
+        decks={decks}
+        uid={uid}
+        account={authUser}
+        onRename={onRenamePseudo}
+        onResetAll={onResetAll}
+        onDelete={onDeleteAccount}
+        onLinkAccount={onLinkAccount}
+        onSignOut={onSignOut}
+      />
+    );
+  } else {
+    screen = (
+      <Home
+        decks={decks}
+        loadingDecks={loadingDecks}
+        uid={uid}
+        account={authUser}
+        onLinkAccount={onLinkAccount}
+        onSendVerification={() => sendVerification()}
+        onRefreshUser={async () => { const ok = await refreshUser(); if (ok) setAuthUser((u) => ({ ...u, emailVerified: true })); return ok; }}
+        onOpen={(id, guided) => { setOpenId(id); setStartGuided(!!guided); }}
+        onMultiReview={setMulti}
+        onMerge={(srcDecks, name) => mergeDecks(srcDecks, uid, pseudo, name)}
+        groups={groups}
+        onCreate={(name) => createDeck(name, uid, pseudo)}
+        onRename={renameDeck}
+        onDelete={deleteDeck}
+        onCopy={(d) => copyDeck(d, uid, pseudo)}
+        onImport={(name, cards, onProgress) => createDeckFromCards(name, cards, uid, pseudo, onProgress)}
+        onLeave={(id) => leaveDeck(id, uid)}
+        onJoin={(code) => joinByCode(code, uid, pseudo)}
+      />
+    );
   }
 
   return (
     <>
-    <Home
-      decks={decks}
-      loadingDecks={loadingDecks}
-      pseudo={pseudo}
-      uid={uid}
-      account={authUser}
-      onRenamePseudo={async (p) => { savePseudo(p); await setDisplayName(p).catch(() => {}); await renamePseudo(decks, uid, p); }}
-      onResetAll={() => resetAllProgress(decks, uid)}
-      onDeleteAccount={async (password) => {
-        await deleteAccount(decks, uid, password);
-        localStorage.removeItem(PSEUDO_KEY);
-        localStorage.removeItem("flash.offlineDecks");
-        setPseudo("");
-        setPseudoDraft("");
-      }}
-      onLinkAccount={() => setLinking(true)}
-      onSignOut={async () => { await signOutUser(); localStorage.removeItem(PSEUDO_KEY); setPseudo(""); }}
-      onSendVerification={() => sendVerification()}
-      onRefreshUser={async () => { const ok = await refreshUser(); if (ok) setAuthUser((u) => ({ ...u, emailVerified: true })); return ok; }}
-      onOpen={(id, guided) => { setOpenId(id); setStartGuided(!!guided); }}
-      onMultiReview={setMulti}
-      onMerge={(srcDecks, name) => mergeDecks(srcDecks, uid, pseudo, name)}
-      groups={groups}
-      onOpenGroups={() => setGroupsOpen(true)}
-      onCreate={(name) => createDeck(name, uid, pseudo)}
-      onRename={renameDeck}
-      onDelete={deleteDeck}
-      onCopy={(d) => copyDeck(d, uid, pseudo)}
-      onImport={(name, cards, onProgress) => createDeckFromCards(name, cards, uid, pseudo, onProgress)}
-      onLeave={(id) => leaveDeck(id, uid)}
-      onJoin={(code) => joinByCode(code, uid, pseudo)}
-    />
-
-      {groupsOpen && (
-        <GroupsModal
-          groups={groups}
-          onOpen={(id) => { setGroupsOpen(false); setOpenGroupId(id); }}
-          onCreate={async (name) => { await createGroup(name, uid, pseudo); }}
-          onJoin={async (code) => { await joinGroupByCode(code, uid, pseudo); }}
-          onClose={() => setGroupsOpen(false)}
-        />
-      )}
+      <NavLayout tab={tab} onTab={goTab} badges={{ groups: groups.some(groupHasNews) }} pseudo={pseudo}>
+        {screen}
+      </NavLayout>
 
       {linking && (
         <LinkAccountModal
@@ -603,10 +640,15 @@ function DeckMenu({ deck, uid, copying, onShare, onCopy, onRename, onDelete, onL
   );
 }
 
-/* Puce de filtre par dossier (barre d'accueil). Sert aussi de CIBLE de dépôt
-   quand on fait glisser un paquet : `folderId` la rend repérable par
-   elementFromPoint, `dragOver` la met en évidence sous le doigt/curseur. */
-function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onResetAll, onDeleteAccount, onLinkAccount, onSignOut, onSendVerification, onRefreshUser, onOpen, onMultiReview, onMerge, groups, onOpenGroups, onCreate, onRename, onDelete, onCopy, onLeave, onImport, onJoin }) {
+/* Critères de tri de la liste des paquets (menu SortMenu). */
+const DECK_SORTS = [
+  { key: "recent", label: "Date d'ajout" },
+  { key: "reviewed", label: "Dernière révision" },
+  { key: "name", label: "Nom" },
+  { key: "creator", label: "Créateur" },
+];
+
+function Home({ decks, loadingDecks, uid, account, onLinkAccount, onSendVerification, onRefreshUser, onOpen, onMultiReview, onMerge, groups, onCreate, onRename, onDelete, onCopy, onLeave, onImport, onJoin }) {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [renaming, setRenaming] = useState(null);
@@ -622,12 +664,20 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
   // Dossiers personnels (étiquettes) : un seul doc utilisateur, écouté ici.
   const [prefs, setPrefs] = useState({ folders: [], deckTags: {} });
   const [activeFolder, setActiveFolder] = useState(null);   // null=tous · "none"=sans dossier · sinon id
-  const [foldersOpen, setFoldersOpen] = useState(false);    // modale de gestion
+  // Gestion des dossiers SUR PLACE (barre de puces) : création, renommage,
+  // suppression, déplacement par appui long.
+  const [newFolder, setNewFolder] = useState(null);           // null = fermé, sinon texte saisi
+  const [renamingFolder, setRenamingFolder] = useState(null); // { id, value }
+  const [confirmDelFolder, setConfirmDelFolder] = useState(null);
+  const [folderDrag, setFolderDrag] = useState(null);         // { id, order: [ids] }
+  const folderDragRef = useRef(null);
+  // Saisie ouverte : évite qu'Entrée PUIS la perte de focus valident deux fois.
+  const newFolderOpen = useRef(false);
+  const renameFolderOpen = useRef(false);
   const [tagDeck, setTagDeck] = useState(null);             // paquet dont on choisit les dossiers (⋮)
   const [tagBulk, setTagBulk] = useState(false);            // assignation à la sélection multiple
-  const [profile, setProfile] = useState(false);
-  const [theme, toggleTheme] = useTheme();
-  // Sélection de plusieurs paquets pour une révision commune.
+  // Sélection de plusieurs paquets (appui long sur un paquet) : réviser,
+  // fusionner, ranger.
   const [picking, setPicking] = useState(false);
   const [picked, setPicked] = useState(() => new Set());
   const [merging, setMerging] = useState(false);
@@ -636,6 +686,7 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
   // Sens du tri par défaut : récent d'abord pour les dates, A→Z pour le texte.
   const defaultDir = (cat) => (cat === "name" || cat === "creator" ? "asc" : "desc");
   const [sortDir, setSortDir] = useState(defaultDir("recent"));
+  const [deckView, setDeckView] = useDeckView();   // "list" (une par ligne) | "grid" (compacte)
 
   const choisis = decks.filter((d) => picked.has(d.id));
 
@@ -675,8 +726,84 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
   const visibles = decks
     .filter((d) => (!q || norm(d.name).includes(q) || norm(ownerName(d)).includes(q)) && inActiveFolder(d))
     .sort((a, b) => dir * comparateurs[sort](a, b));
-  const togglePick = (id) =>
-    setPicked((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  // Cocher / décocher ; décocher le dernier referme la sélection.
+  const togglePick = (id) => {
+    const n = new Set(picked);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    setPicked(n);
+    if (n.size === 0) setPicking(false);
+  };
+  const exitPicking = () => { setPicking(false); setPicked(new Set()); };
+  // Appui long sur un paquet : entre en sélection avec lui (ou le coche/décoche
+  // si la sélection est déjà ouverte).
+  const deckPress = useLongPress((id) => {
+    if (picking) togglePick(id);
+    else { setPicking(true); setPicked(new Set([id])); }
+  });
+
+  /* --- Dossiers gérés sur place --- */
+  const openNewFolder = () => { newFolderOpen.current = true; setNewFolder(""); };
+  const closeNewFolder = () => { newFolderOpen.current = false; setNewFolder(null); };
+  const submitNewFolder = async (value) => {
+    if (!newFolderOpen.current) return;
+    closeNewFolder();
+    const name = value.trim();
+    if (!name) return;
+    try { await createFolder(uid, name); }
+    catch (e) { console.error(e); alert("Création impossible. Réessayez."); }
+  };
+  const openRenameFolder = (f) => { renameFolderOpen.current = true; setRenamingFolder({ id: f.id, value: f.name }); };
+  const closeRenameFolder = () => { renameFolderOpen.current = false; setRenamingFolder(null); };
+  const submitRenameFolder = async (id, value) => {
+    if (!renameFolderOpen.current) return;
+    closeRenameFolder();
+    const name = value.trim();
+    if (!name || name === folders.find((x) => x.id === id)?.name) return;
+    try { await renameFolder(uid, folders, id, name); }
+    catch (e) { console.error(e); alert("Renommage impossible. Réessayez."); }
+  };
+
+  // Déplacer un dossier : appui long, puis glisser sur une autre puce. L'ordre
+  // affiché suit le doigt ; il n'est enregistré qu'au relâchement.
+  const folderPress = useLongPress((id, info) => {
+    try { info.el.setPointerCapture(info.pointerId); } catch { /* pointeur déjà relâché */ }
+    const order = folders.map((x) => x.id);
+    folderDragRef.current = { id, order };
+    setFolderDrag({ id, order });
+  });
+  const moveFolderDrag = (e) => {
+    const d = folderDragRef.current;
+    if (!d) return;
+    const target = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-folder-chip]")?.dataset.folderChip;
+    if (!target || target === d.id) return;
+    const order = moveId(d.order, d.id, target);
+    if (sameOrder(order, d.order)) return;
+    folderDragRef.current = { ...d, order };
+    setFolderDrag({ ...d, order });
+  };
+  const endFolderDrag = () => {
+    const d = folderDragRef.current;
+    folderDragRef.current = null;
+    setFolderDrag(null);
+    if (!d || sameOrder(d.order, folders.map((x) => x.id))) return;
+    const byId = new Map(folders.map((x) => [x.id, x]));
+    reorderFolders(uid, d.order.map((id) => byId.get(id)).filter(Boolean)).catch((e) => console.error(e));
+  };
+  // Au doigt, la page ne doit pas défiler pendant le déplacement. Écouteur NON
+  // passif posé d'avance sur la barre (ref callback : elle apparaît et disparaît) :
+  // ajouté en cours de geste, le navigateur aurait déjà pris la main.
+  const chipBarCleanup = useRef(null);
+  const chipBarRef = useCallback((el) => {
+    chipBarCleanup.current?.();
+    chipBarCleanup.current = null;
+    if (!el) return;
+    const block = (e) => { if (folderDragRef.current) e.preventDefault(); };
+    el.addEventListener("touchmove", block, { passive: false });
+    chipBarCleanup.current = () => el.removeEventListener("touchmove", block);
+  }, []);
+  const shownFolders = folderDrag
+    ? folderDrag.order.map((id) => folders.find((x) => x.id === id)).filter(Boolean)
+    : folders;
 
   const copy = async (d) => {
     setCopying(d.id);
@@ -713,6 +840,22 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
     setDrag(null);
   };
 
+  // Échap referme la sélection (sauf si une fenêtre est ouverte par-dessus :
+  // c'est elle qu'Échap ferme).
+  useEffect(() => {
+    if (!picking || merging || tagBulk) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") exitPicking(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [picking, merging, tagBulk]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pas de barre de défilement sur la page Paquets (on défile toujours au doigt
+  // et à la molette) — comme l'accueil de Darts Scorer.
+  useEffect(() => {
+    document.documentElement.classList.add("no-scrollbar");
+    return () => document.documentElement.classList.remove("no-scrollbar");
+  }, []);
+
   // Échap ferme les barres de création / jonction, quel que soit le focus.
   useEffect(() => {
     if (!creating && !joining) return undefined;
@@ -746,53 +889,12 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
         home
         title="Mes paquets"
         subtitle={`${decks.length} paquet${decks.length > 1 ? "s" : ""}`}
-        right={
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={toggleTheme}
-              aria-label={theme === "dark" ? "Passer en thème clair" : "Passer en thème sombre"}
-              title={theme === "dark" ? "Thème clair" : "Thème sombre"}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm ring-1 ring-slate-200 transition hover:text-violet-700 hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-400 dark:ring-slate-700 dark:hover:text-violet-300 dark:hover:ring-slate-600"
-            >
-              {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
-            </button>
-            <button onClick={() => setProfile(true)} aria-label="Mon compte" className="flex items-center gap-2 rounded-full bg-white dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-slate-700 dark:text-slate-300 shadow-sm ring-1 ring-slate-200 dark:ring-slate-700 transition hover:ring-slate-300 dark:hover:ring-slate-600">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-600 text-xs font-bold text-white">{pseudo[0]?.toUpperCase()}</span>
-              {pseudo}
-            </button>
-          </div>
-        }
       />
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button onClick={() => setCreating(true)} className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 font-semibold text-white transition hover:bg-violet-700"><Plus size={17} /> Nouveau paquet</button>
         <button onClick={() => setJoining(true)} className="flex items-center gap-2 rounded-xl bg-white dark:bg-slate-900 px-4 py-2.5 font-semibold text-slate-800 dark:text-slate-200 shadow-sm ring-1 ring-slate-200 dark:ring-slate-700 transition hover:ring-slate-300 dark:hover:ring-slate-600"><LogIn size={17} /> Rejoindre par code</button>
         <button onClick={() => setImporting(true)} className="flex items-center gap-2 rounded-xl bg-white dark:bg-slate-900 px-4 py-2.5 font-semibold text-slate-800 dark:text-slate-200 shadow-sm ring-1 ring-slate-200 dark:ring-slate-700 transition hover:ring-slate-300 dark:hover:ring-slate-600"><Upload size={17} /> Importer</button>
-        <button onClick={onOpenGroups} className="relative flex items-center gap-2 rounded-xl bg-white dark:bg-slate-900 px-4 py-2.5 font-semibold text-slate-800 dark:text-slate-200 shadow-sm ring-1 ring-slate-200 dark:ring-slate-700 transition hover:ring-slate-300 dark:hover:ring-slate-600">
-          <Users size={17} /> Groupes
-          {groups.some(groupHasNews) && (
-            <span className="absolute -right-1 -top-1 flex h-3 w-3">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
-              <span className="relative inline-flex h-3 w-3 rounded-full bg-violet-500" />
-            </span>
-          )}
-        </button>
-        <button onClick={() => setFoldersOpen(true)} title="Ranger vos paquets dans des dossiers" className="flex items-center gap-2 rounded-xl bg-white dark:bg-slate-900 px-4 py-2.5 font-semibold text-slate-800 dark:text-slate-200 shadow-sm ring-1 ring-slate-200 dark:ring-slate-700 transition hover:ring-slate-300 dark:hover:ring-slate-600">
-          <Folder size={17} /> Dossiers
-        </button>
-        {decks.length > 1 && (
-          <button
-            onClick={() => { setPicking((p) => !p); setPicked(new Set()); }}
-            title="Réviser plusieurs paquets ensemble"
-            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 font-semibold shadow-sm ring-1 transition ${
-              picking
-                ? "bg-violet-600 text-white ring-violet-600 hover:bg-violet-700"
-                : "bg-white text-slate-800 ring-slate-200 hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700 dark:hover:ring-slate-600"
-            }`}
-          >
-            <CheckSquare size={17} /> {picking ? "Terminer" : "Séléctionner"}
-          </button>
-        )}
       </div>
 
       {creating && (
@@ -831,60 +933,176 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
               </button>
             )}
           </div>
-          <div className="flex items-center gap-1.5">
-            <div className="relative">
-              <ArrowDownWideNarrow size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
-              <select
-                value={sort}
-                onChange={(e) => { setSort(e.target.value); setSortDir(defaultDir(e.target.value)); }}
-                aria-label="Trier les paquets"
-                className="appearance-none rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-8 text-sm font-medium text-slate-700 outline-none focus-visible:border-violet-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-              >
-                <option value="recent">Date d'ajout</option>
-                <option value="reviewed">Dernière révision</option>
-                <option value="name">Nom</option>
-                <option value="creator">Créateur</option>
-              </select>
-            </div>
-            <button
-              onClick={() => setSortDir((s) => (s === "asc" ? "desc" : "asc"))}
-              aria-label={sortDir === "asc" ? "Tri croissant, cliquer pour décroissant" : "Tri décroissant, cliquer pour croissant"}
-              title={
-                sort === "name" || sort === "creator"
-                  ? (sortDir === "asc" ? "A → Z" : "Z → A")
-                  : (sortDir === "asc" ? "Plus ancien d'abord" : "Plus récent d'abord")
-              }
-              className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:text-violet-700 hover:ring-1 hover:ring-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:text-violet-300"
-            >
-              {sortDir === "asc" ? <ArrowUpNarrowWide size={17} /> : <ArrowDownWideNarrow size={17} />}
-            </button>
-          </div>
+          {/* Tri : un seul bouton icône, critère et sens dans un menu. */}
+          <SortMenu
+            label="Trier les paquets"
+            options={DECK_SORTS}
+            value={{ key: sort, dir: sortDir }}
+            defaultDir={defaultDir}
+            dirLabels={(k) => (k === "name" || k === "creator"
+              ? { asc: "A → Z", desc: "Z → A" }
+              : { asc: "Plus ancien d'abord", desc: "Plus récent d'abord" })}
+            onChange={({ key, dir }) => { setSort(key); setSortDir(dir); }}
+          />
+          <ViewToggle view={deckView} onChange={setDeckView} />
         </div>
       )}
 
-      {/* Barre de filtres par dossier : n'apparaît qu'une fois un dossier créé.
-          « Tous » et « Sans dossier » encadrent les dossiers de l'utilisateur. */}
-      {!loadingDecks && decks.length > 0 && folders.length > 0 && (
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+      {/* Dossiers perso : filtres ET gestion sur place. Le dossier sélectionné
+          porte ses actions (renommer, supprimer) ; un appui long le déplace ;
+          « + » en crée un. `data-no-tab-swipe` : un glisser ici déplace un
+          dossier, il ne change pas d'onglet. */}
+      {!loadingDecks && decks.length > 0 && (
+        <div ref={chipBarRef} data-no-tab-swipe className="mt-3 flex flex-wrap items-center gap-1.5">
           <FolderChip label="Tous" count={decks.length} active={activeFolder === null} onClick={() => setActiveFolder(null)} />
-          {folders.map((f) => (
+          {shownFolders.map((f) => {
+            if (renamingFolder?.id === f.id) {
+              return (
+                <input
+                  key={f.id}
+                  autoFocus
+                  value={renamingFolder.value}
+                  onChange={(e) => setRenamingFolder({ id: f.id, value: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submitRenameFolder(f.id, e.currentTarget.value);
+                    if (e.key === "Escape") closeRenameFolder();
+                  }}
+                  onBlur={(e) => submitRenameFolder(f.id, e.currentTarget.value)}
+                  aria-label="Nouveau nom du dossier"
+                  className="h-8 w-40 rounded-full border border-violet-400 bg-white px-3 text-sm text-slate-900 outline-none dark:bg-slate-900 dark:text-slate-100"
+                />
+              );
+            }
+            const press = folderPress(f.id);
+            const selected = activeFolder === f.id;
+            return (
+              <FolderChip
+                key={f.id}
+                icon
+                folderId={f.id}
+                dragOver={drag?.overId === f.id}
+                lifted={folderDrag?.id === f.id}
+                label={f.name}
+                count={decks.filter((d) => deckFolders(d.id).includes(f.id)).length}
+                active={selected}
+                onClick={() => setActiveFolder(f.id)}
+                pressProps={{
+                  ...press,
+                  "data-folder-chip": f.id,
+                  onPointerMove: (e) => { press.onPointerMove(e); moveFolderDrag(e); },
+                  onPointerUp: (e) => { press.onPointerUp(e); endFolderDrag(); },
+                  onPointerCancel: (e) => { press.onPointerCancel(e); endFolderDrag(); },
+                }}
+                actions={selected && !folderDrag ? (
+                  <>
+                    <button
+                      data-no-longpress
+                      onClick={() => openRenameFolder(f)}
+                      aria-label={`Renommer le dossier ${f.name}`}
+                      title="Renommer"
+                      className="flex h-7 w-7 items-center justify-center rounded-full text-violet-100 transition hover:bg-white/15 hover:text-white"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      data-no-longpress
+                      onClick={() => setConfirmDelFolder(f)}
+                      aria-label={`Supprimer le dossier ${f.name}`}
+                      title="Supprimer"
+                      className="flex h-7 w-7 items-center justify-center rounded-full text-violet-100 transition hover:bg-white/15 hover:text-white"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </>
+                ) : null}
+              />
+            );
+          })}
+          {folders.length > 0 && (
             <FolderChip
-              key={f.id}
-              icon
-              folderId={f.id}
-              dragOver={drag?.overId === f.id}
-              label={f.name}
-              count={decks.filter((d) => deckFolders(d.id).includes(f.id)).length}
-              active={activeFolder === f.id}
-              onClick={() => setActiveFolder(f.id)}
+              label="Sans dossier"
+              count={decks.filter((d) => deckFolders(d.id).length === 0).length}
+              active={activeFolder === "none"}
+              onClick={() => setActiveFolder("none")}
             />
-          ))}
-          <FolderChip
-            label="Sans dossier"
-            count={decks.filter((d) => deckFolders(d.id).length === 0).length}
-            active={activeFolder === "none"}
-            onClick={() => setActiveFolder("none")}
-          />
+          )}
+          {newFolder !== null ? (
+            <input
+              autoFocus
+              value={newFolder}
+              onChange={(e) => setNewFolder(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitNewFolder(e.currentTarget.value);
+                if (e.key === "Escape") closeNewFolder();
+              }}
+              onBlur={(e) => submitNewFolder(e.currentTarget.value)}
+              placeholder="Nouveau dossier"
+              aria-label="Nom du nouveau dossier"
+              className="h-8 w-40 rounded-full border border-violet-400 bg-white px-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:bg-slate-900 dark:text-slate-100"
+            />
+          ) : (
+            <button
+              onClick={openNewFolder}
+              aria-label="Nouveau dossier"
+              title="Nouveau dossier"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-500 ring-1 ring-slate-200 transition hover:text-violet-700 hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-400 dark:ring-slate-700 dark:hover:text-violet-300 dark:hover:ring-slate-600"
+            >
+              <Plus size={16} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Sélection (ouverte par un appui long sur un paquet) : dans l'en-tête
+          collant, pour rester sous la main pendant qu'on fait défiler. */}
+      {picking && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-violet-50 px-3 py-2 ring-1 ring-violet-200 dark:bg-violet-500/10 dark:ring-violet-500/30">
+          <button
+            onClick={exitPicking}
+            aria-label="Quitter la sélection"
+            title="Quitter la sélection"
+            className="-ml-1 flex h-8 w-8 items-center justify-center rounded-lg text-violet-700 transition hover:bg-violet-100 dark:text-violet-200 dark:hover:bg-violet-500/20"
+          >
+            <X size={18} />
+          </button>
+          <span className="text-sm font-medium text-violet-800 dark:text-violet-200">
+            {choisis.length} paquet{choisis.length > 1 ? "s" : ""} sélectionné{choisis.length > 1 ? "s" : ""}
+            {choisis.length > 0 && ` · ${choisis.reduce((n, d) => n + deckProgress(d, uid).total, 0)} cartes`}
+          </span>
+          <div className="ml-auto flex flex-wrap gap-1.5">
+            <button
+              onClick={() => {
+                if (visibles.every((d) => picked.has(d.id))) exitPicking();
+                else setPicked(new Set(visibles.map((d) => d.id)));
+              }}
+              className="rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-slate-700 ring-1 ring-slate-200 transition hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"
+            >
+              {visibles.every((d) => picked.has(d.id)) ? "Tout décocher" : "Tout cocher"}
+            </button>
+            <button
+              onClick={() => setTagBulk(true)}
+              disabled={!choisis.length}
+              title="Ranger les paquets sélectionnés dans un dossier"
+              className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 ring-1 ring-slate-200 transition hover:ring-slate-300 disabled:opacity-40 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"
+            >
+              <Folder size={15} /> Ranger
+            </button>
+            <button
+              onClick={() => setMerging(true)}
+              disabled={choisis.length < 2}
+              title="Créer un paquet réunissant les cartes des paquets sélectionnés"
+              className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 ring-1 ring-slate-200 transition hover:ring-slate-300 disabled:opacity-40 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"
+            >
+              <GitMerge size={15} /> Fusionner
+            </button>
+            <button
+              onClick={() => onMultiReview(choisis)}
+              disabled={!choisis.length}
+              className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-violet-700 disabled:opacity-40"
+            >
+              <Play size={15} /> Réviser
+            </button>
+          </div>
         </div>
       )}
       </StickyTop>
@@ -896,47 +1114,7 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
         <VerifyBanner email={account.email} onSend={onSendVerification} onRefresh={onRefreshUser} />
       )}
 
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {picking && (
-          <div className="col-span-full flex flex-wrap items-center gap-2 rounded-xl bg-violet-50 px-3 py-2 ring-1 ring-violet-200 dark:bg-violet-500/10 dark:ring-violet-500/30">
-            <span className="text-sm font-medium text-violet-800 dark:text-violet-200">
-              {choisis.length} paquet{choisis.length > 1 ? "s" : ""} sélectionné{choisis.length > 1 ? "s" : ""}
-              {choisis.length > 0 && ` · ${choisis.reduce((n, d) => n + deckProgress(d, uid).total, 0)} cartes`}
-            </span>
-            <div className="ml-auto flex flex-wrap gap-1.5">
-              <button
-                onClick={() => setPicked(new Set(visibles.every((d) => picked.has(d.id)) ? [] : visibles.map((d) => d.id)))}
-                className="rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-slate-700 ring-1 ring-slate-200 transition hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"
-              >
-                {visibles.every((d) => picked.has(d.id)) ? "Tout décocher" : "Tout cocher"}
-              </button>
-              <button
-                onClick={() => setTagBulk(true)}
-                disabled={!choisis.length}
-                title="Ranger les paquets sélectionnés dans un dossier"
-                className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 ring-1 ring-slate-200 transition hover:ring-slate-300 disabled:opacity-40 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"
-              >
-                <Folder size={15} /> Ranger
-              </button>
-              <button
-                onClick={() => setMerging(true)}
-                disabled={choisis.length < 2}
-                title="Créer un paquet réunissant les cartes des paquets sélectionnés"
-                className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 ring-1 ring-slate-200 transition hover:ring-slate-300 disabled:opacity-40 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"
-              >
-                <GitMerge size={15} /> Fusionner
-              </button>
-              <button
-                onClick={() => onMultiReview(choisis)}
-                disabled={!choisis.length}
-                className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-violet-700 disabled:opacity-40"
-              >
-                <Play size={15} /> Réviser
-              </button>
-            </div>
-          </div>
-        )}
-
+      <div className={`mt-3 grid ${deckView === "grid" ? "grid-cols-2 gap-2.5 sm:grid-cols-3" : "grid-cols-1 gap-3"}`}>
         {loadingDecks && (
           <div className="col-span-full rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700 bg-white/50 dark:bg-slate-900/50">
             <Loading label="Chargement de vos paquets…" />
@@ -955,29 +1133,89 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
         )}
         {visibles.map((d) => {
           const prog = deckProgress(d, uid);
+          const isPicked = picked.has(d.id);
+          // En sélection, toute la vignette coche / décoche (un calque
+          // par-dessus intercepte les touchers : rien ne s'ouvre).
+          const pickOverlay = picking && (
+            <button
+              onClick={() => togglePick(d.id)}
+              aria-pressed={isPicked}
+              aria-label={`${isPicked ? "Désélectionner" : "Sélectionner"} ${d.name}`}
+              className="absolute inset-0 z-10 rounded-2xl"
+            >
+              <span className={`absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-md ring-1 ${
+                isPicked ? "bg-violet-600 text-white ring-violet-600" : "bg-white ring-slate-300 dark:bg-slate-900 dark:ring-slate-600"
+              }`}>
+                {isPicked && <Check size={13} />}
+              </span>
+            </button>
+          );
+          const cardRing = picking && isPicked ? "ring-2 ring-violet-400 dark:ring-violet-500" : "ring-slate-200 dark:ring-slate-700";
+          const cardDim = picking && !isPicked ? "opacity-60" : "";
+
+          /* Grille compacte : nom, nombre de cartes, progression ; toucher la
+             vignette ouvre le paquet, le menu ⋮ reste en coin. Pas de poignée
+             de rangement ici (dossiers : menu ⋮ ou sélection → Ranger). */
+          if (deckView === "grid") {
+            return (
+              <div
+                key={d.id}
+                {...deckPress(d.id)}
+                className={`relative flex select-none flex-col rounded-2xl bg-white p-3 shadow-sm ring-1 transition [-webkit-touch-callout:none] hover:shadow-md dark:bg-slate-900 ${cardRing} ${cardDim}`}
+              >
+                {pickOverlay}
+                {renaming === d.id ? (
+                  <input
+                    autoFocus
+                    value={renameVal}
+                    onChange={(e) => setRenameVal(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && renameVal.trim()) { onRename(d.id, renameVal.trim()); setRenaming(null); }
+                      if (e.key === "Escape") setRenaming(null);
+                    }}
+                    onBlur={() => setRenaming(null)}
+                    aria-label="Nouveau nom du paquet"
+                    className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm outline-none focus-visible:border-violet-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                ) : (
+                  <>
+                    <button onClick={() => onOpen(d.id)} className="flex min-w-0 flex-1 flex-col justify-start pr-6 text-left">
+                      <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-slate-900 dark:text-slate-100">
+                        <Highlight text={d.name} query={search} />
+                      </h3>
+                      <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">
+                        {prog.total} carte{prog.total > 1 ? "s" : ""}
+                        {d.owner !== uid && <> · <Highlight text={ownerName(d)} query={search} /></>}
+                      </p>
+                    </button>
+                    <div className="mt-2.5"><DeckProgress stats={prog} compact /></div>
+                    <div className="absolute right-1 top-1">
+                      <DeckMenu
+                        deck={d}
+                        uid={uid}
+                        copying={copying === d.id}
+                        onShare={() => setSharing(d)}
+                        onCopy={() => copy(d)}
+                        onRename={() => { setRenaming(d.id); setRenameVal(d.name); }}
+                        onDelete={() => setConfirmDel(d)}
+                        onLeave={() => setConfirmLeave(d)}
+                        onFolders={() => setTagDeck(d)}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          }
+
           return (
           // pas d'overflow-hidden : l'info-bulle de la barre de progression doit pouvoir déborder
           <div
             key={d.id}
-            onClick={picking ? () => togglePick(d.id) : undefined}
-            className={`relative rounded-2xl bg-white p-4 shadow-sm ring-1 transition hover:shadow-md dark:bg-slate-900 ${
-              picking ? "cursor-pointer" : ""
-            } ${
-              picking && picked.has(d.id)
-                ? "ring-2 ring-violet-400 dark:ring-violet-500"
-                : "ring-slate-200 dark:ring-slate-700"
-            } ${picking && !picked.has(d.id) ? "opacity-60" : ""}`}
+            {...deckPress(d.id)}
+            className={`relative select-none rounded-2xl bg-white p-4 shadow-sm ring-1 transition [-webkit-touch-callout:none] hover:shadow-md dark:bg-slate-900 ${cardRing} ${cardDim}`}
           >
-            {picking && (
-              <input
-                type="checkbox"
-                checked={picked.has(d.id)}
-                onChange={() => togglePick(d.id)}
-                onClick={(e) => e.stopPropagation()}
-                aria-label={`Sélectionner ${d.name}`}
-                className="absolute right-3 top-3 h-4 w-4 accent-violet-600"
-              />
-            )}
+            {pickOverlay}
             {renaming === d.id ? (
               <div className="flex items-center gap-2">
                 <input autoFocus value={renameVal} onChange={(e) => setRenameVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && renameVal.trim()) { onRename(d.id, renameVal.trim()); setRenaming(null); } if (e.key === "Escape") setRenaming(null); }} className="min-w-0 flex-1 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1.5 outline-none focus-visible:border-violet-500" />
@@ -1020,6 +1258,8 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
                     onPointerMove={moveDeckDrag}
                     onPointerUp={endDeckDrag}
                     onPointerCancel={endDeckDrag}
+                    data-no-longpress
+                    data-no-tab-swipe
                     aria-label="Glisser vers un dossier"
                     title="Glisser vers un dossier"
                     className="flex h-8 w-8 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg text-slate-300 transition hover:bg-slate-100 hover:text-slate-500 active:cursor-grabbing dark:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-400"
@@ -1070,20 +1310,6 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
         />
       )}
 
-      {profile && (
-        <ProfileModal
-          pseudo={pseudo}
-          decks={decks}
-          uid={uid}
-          account={account}
-          onRename={onRenamePseudo}
-          onResetAll={onResetAll}
-          onDelete={async (password) => { await onDeleteAccount(password); setProfile(false); }}
-          onLinkAccount={() => { setProfile(false); onLinkAccount(); }}
-          onSignOut={onSignOut}
-          onClose={() => setProfile(false)}
-        />
-      )}
 
       {importing && (
         <ImportModal
@@ -1128,8 +1354,19 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
         <ShareModal deck={decks.find((d) => d.id === sharing.id) || sharing} uid={uid} groups={groups} onClose={() => setSharing(null)} />
       )}
 
-      {foldersOpen && (
-        <FoldersModal uid={uid} folders={folders} deckTags={deckTags} onClose={() => setFoldersOpen(false)} />
+      {confirmDelFolder && (
+        <ConfirmModal
+          title={`Supprimer le dossier « ${confirmDelFolder.name} » ?`}
+          body="Les paquets ne sont pas supprimés : ils perdent seulement ce dossier."
+          confirmLabel="Supprimer le dossier"
+          busyLabel="Suppression…"
+          onCancel={() => setConfirmDelFolder(null)}
+          onConfirm={async () => {
+            await deleteFolder(uid, folders, deckTags, confirmDelFolder.id);
+            if (activeFolder === confirmDelFolder.id) setActiveFolder(null);
+            setConfirmDelFolder(null);
+          }}
+        />
       )}
 
       {tagDeck && (
@@ -1140,7 +1377,6 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
           folders={folders}
           isOn={(id) => deckFolders(tagDeck.id).includes(id)}
           onToggle={(id, on) => toggleDeckFolder(uid, tagDeck.id, id, on).catch((e) => console.error(e))}
-          onManage={() => { setTagDeck(null); setFoldersOpen(true); }}
           onClose={() => setTagDeck(null)}
         />
       )}
@@ -1155,7 +1391,6 @@ function Home({ decks, loadingDecks, pseudo, uid, account, onRenamePseudo, onRes
           // clic l'ajoute à tous, un second le retire de tous.
           isOn={(id) => choisis.length > 0 && choisis.every((d) => deckFolders(d.id).includes(id))}
           onToggle={(id, on) => choisis.forEach((d) => toggleDeckFolder(uid, d.id, id, on).catch((e) => console.error(e)))}
-          onManage={() => { setTagBulk(false); setFoldersOpen(true); }}
           onClose={() => setTagBulk(false)}
         />
       )}

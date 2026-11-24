@@ -12,6 +12,7 @@ import { joinDeck } from "../lib/decks";
 import { watchUserPrefs, toggleDeckFolder, tagsOf } from "../lib/folders";
 import { filterCatalog, countByFolder, folderOfEntry, canManageFolder, sortFolders } from "../lib/groupFolders";
 import { FolderPicker, FoldersModal, FolderChip } from "./FoldersModal";
+import ViewToggle, { useDeckView } from "./ViewToggle";
 
 /*
  * Vitrine d'un groupe : la liste des paquets qui y sont publiés. On rejoint
@@ -41,6 +42,7 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
   const deckFolders = (id) => tagsOf(deckTags, id).filter((t) => folderIds.has(t));
 
   const isOwner = group.owner === uid;
+  const [deckView, setDeckView] = useDeckView();   // "list" | "grid" (compacte), commune avec l'accueil
 
   // Dossiers du groupe : tout membre en crée ; seuls leur créateur et le
   // propriétaire du groupe les gèrent ; chacun range les paquets qu'il a
@@ -102,6 +104,7 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
         >
           <FolderTree size={16} /> Dossiers
         </button>
+        <ViewToggle small view={deckView} onChange={setDeckView} />
         {isOwner ? (
           <button onClick={() => setConfirmDelete(true)} className="ml-auto flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-slate-500 transition hover:bg-white hover:text-red-600 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-red-400">
             <Trash2 size={16} /> Supprimer le groupe
@@ -132,14 +135,14 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
       )}
       </StickyTop>
 
-      <div className="mt-3 space-y-2.5">
+      <div className={`mt-3 ${deckView === "grid" ? "grid grid-cols-2 gap-2.5 sm:grid-cols-3" : "space-y-2.5"}`}>
         {catalog === null && (
-          <div className="flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 bg-white/50 py-12 text-slate-500 dark:border-slate-700 dark:bg-slate-900/50">
+          <div className="col-span-full flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 bg-white/50 py-12 text-slate-500 dark:border-slate-700 dark:bg-slate-900/50">
             <Loader2 size={18} className="animate-spin" /> <span className="text-sm font-medium">Chargement du catalogue…</span>
           </div>
         )}
         {catalog?.length === 0 && (
-          <div className="rounded-2xl border-2 border-dashed border-slate-200 bg-white/50 py-12 text-center dark:border-slate-700 dark:bg-slate-900/50">
+          <div className="col-span-full rounded-2xl border-2 border-dashed border-slate-200 bg-white/50 py-12 text-center dark:border-slate-700 dark:bg-slate-900/50">
             <p className="font-medium text-slate-700 dark:text-slate-300">Aucun paquet publié</p>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
               Publiez un de vos paquets depuis son bouton « Partager », onglet groupe.
@@ -147,7 +150,7 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
           </div>
         )}
         {catalog?.length > 0 && shownCatalog.length === 0 && (
-          <div className="rounded-2xl border-2 border-dashed border-slate-200 bg-white/50 py-10 text-center dark:border-slate-700 dark:bg-slate-900/50">
+          <div className="col-span-full rounded-2xl border-2 border-dashed border-slate-200 bg-white/50 py-10 text-center dark:border-slate-700 dark:bg-slate-900/50">
             <p className="text-sm text-slate-500 dark:text-slate-400">Aucun paquet dans ce dossier.</p>
           </div>
         )}
@@ -158,6 +161,50 @@ export default function GroupView({ group, uid, pseudo, myDeckIds, onBack, onOpe
           // Je ne range que MES paquets publiés (et je peux créer un dossier
           // depuis le choix s'il n'y en a pas encore).
           const canClass = mine;
+
+          /* Grille compacte : nom, auteur, cartes, dossier du groupe. Toucher la
+             vignette = Voir ; « + » en coin = Rejoindre (coche si déjà rejoint).
+             Classer / ranger dans ses dossiers : affichage en liste. */
+          if (deckView === "grid") {
+            return (
+              <div key={entry.deckId} className="relative flex flex-col rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
+                <button onClick={() => voir(entry)} aria-label={`Voir ${entry.name}`} className="flex min-w-0 flex-1 flex-col justify-start text-left">
+                  <p className="line-clamp-2 pr-8 text-sm font-semibold leading-snug text-slate-900 dark:text-slate-100">{entry.name}</p>
+                  <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">
+                    {entry.ownerPseudo || "?"} · {entry.cardCount || 0} carte{(entry.cardCount || 0) > 1 ? "s" : ""}
+                  </p>
+                  {dossier && (
+                    <p className="mt-1 flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500">
+                      <FolderTree size={11} className="shrink-0" aria-hidden="true" /> <span className="truncate">{dossier}</span>
+                    </p>
+                  )}
+                </button>
+                {estNouveau(entry) && (
+                  <span className="mt-2 inline-flex w-fit items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">
+                    <Sparkles size={11} aria-hidden="true" /> Nouveau
+                  </span>
+                )}
+                <div className="absolute right-1.5 top-1.5">
+                  {dejaMembre ? (
+                    <span title="Déjà dans mes paquets" aria-label="Déjà dans mes paquets" className="flex h-8 w-8 items-center justify-center rounded-lg text-emerald-600 dark:text-emerald-400">
+                      <Check size={16} />
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => rejoindre(entry)}
+                      disabled={joining === entry.deckId}
+                      aria-label={`Rejoindre ${entry.name}`}
+                      title="Rejoindre"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600 text-white transition hover:bg-violet-700 disabled:opacity-50"
+                    >
+                      {joining === entry.deckId ? <Loader2 size={15} className="animate-spin" /> : <Plus size={16} />}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div key={entry.deckId} className="flex items-center gap-3 rounded-2xl bg-white p-3.5 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
               <div className="min-w-0 flex-1">

@@ -4,10 +4,11 @@ import {
   Users, Copy, GripVertical, Circle, RotateCcw, Lock, Unlock, Loader2, WifiOff,
   List, ListOrdered, Table, Search, CheckSquare, Square, FolderPlus, Sparkles, Eye,
   ChevronDown, ChevronUp, ChevronsUpDown, ChevronsDownUp,
-  ArrowDownWideNarrow, ArrowUpNarrowWide,
 } from "lucide-react";
 import { Shell, Header, StickyTop, Modal, IconBtn, ConfirmModal, Loading, useBack } from "./ui";
 import { CARD_SORTS, loadCardSort, saveCardSort, sortCards, isDeckOrder } from "../lib/cardSort";
+import { useLongPress } from "../lib/longPress";
+import SortMenu from "./SortMenu";
 import CropModal from "./CropModal";
 import TableModal from "./TableModal";
 import DeckProgress from "./DeckProgress";
@@ -126,19 +127,34 @@ export default function DeckView({ deck, uid, pseudo, groups = [], isMember = tr
   // montre un autre ordre que celui du paquet.
   const canDrag = canEdit && !q && !selecting && deckOrder;
 
-  /* Sélection : les cartes cochées limitent la prochaine série. Les boutons
-     « Tout » et « Aucune » portent sur les cartes AFFICHÉES, donc sur les
-     résultats quand une recherche est en cours — c'est ce qui permet de
-     composer une série rapidement (chercher un thème, tout cocher). */
-  const startSelect = () => { setSelected(new Set(cards.map((c) => c.id))); setSelecting(true); };
-  const toggleOne = (id) =>
-    setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const checkShown = (on) =>
-    setSelected((s) => {
-      const n = new Set(s);
-      shown.forEach((c) => (on ? n.add(c.id) : n.delete(c.id)));
-      return n;
-    });
+  /* Sélection, ouverte par un APPUI LONG sur une carte (comme les paquets de
+     l'accueil) : les cartes cochées limitent la prochaine série, ou s'exportent
+     / se suppriment. « Tout cocher » porte sur les cartes AFFICHÉES, donc sur
+     les résultats d'une recherche (chercher un thème, tout cocher). Plus rien
+     de coché : la sélection se referme. */
+  const exitSelect = () => { setSelecting(false); setSelected(new Set()); };
+  const applySelection = (n) => { setSelected(n); if (n.size === 0) setSelecting(false); };
+  const toggleOne = (id) => {
+    const n = new Set(selected);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    applySelection(n);
+  };
+  const checkShown = (on) => {
+    const n = new Set(selected);
+    shown.forEach((c) => (on ? n.add(c.id) : n.delete(c.id)));
+    applySelection(n);
+  };
+  const cardPress = useLongPress((id) => {
+    if (selecting) toggleOne(id);
+    else { setSelected(new Set([id])); setSelecting(true); }
+  });
+  // Échap referme la sélection, sauf si une fenêtre est ouverte par-dessus.
+  useEffect(() => {
+    if (!selecting || exporting || confirmDelSel || editor || share) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") exitSelect(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selecting, exporting, confirmDelSel, editor, share]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Un id supprimé entre-temps ne doit pas compter.
   const pool = selecting ? cards.filter((c) => selected.has(c.id)) : cards;
@@ -259,26 +275,14 @@ export default function DeckView({ deck, uid, pseudo, groups = [], isMember = tr
           </button>
         )}
 
-        {cards.length > 0 && (
-          <button
-            onClick={() => (selecting ? setSelecting(false) : startSelect())}
-            title={selecting ? "Quitter la sélection" : "Choisir les cartes à réviser"}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 font-semibold shadow-sm ring-1 transition ${
-              selecting
-                ? "bg-violet-600 text-white ring-violet-600 hover:bg-violet-700"
-                : "bg-white text-slate-800 ring-slate-200 hover:ring-slate-300 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700 dark:hover:ring-slate-600"
-            }`}
-          >
-            <CheckSquare size={17} /> {selecting ? "Terminer" : "Sélectionner"}
-          </button>
-        )}
         {canEdit && (
           <button onClick={() => setEditor({ card: null })} className="flex items-center gap-2 rounded-xl bg-white dark:bg-slate-900 px-4 py-2.5 font-semibold text-slate-800 dark:text-slate-200 shadow-sm ring-1 ring-slate-200 dark:ring-slate-700 transition hover:ring-slate-300 dark:hover:ring-slate-600">
             <Plus size={17} /> Ajouter une carte
           </button>
         )}
         {cards.length > 0 && (
-          <div className="relative min-w-[180px] flex-1">
+          <div className="flex min-w-[200px] flex-1 items-center gap-1.5">
+          <div className="relative min-w-0 flex-1">
             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
             <input
               value={search}
@@ -297,6 +301,20 @@ export default function DeckView({ deck, uid, pseudo, groups = [], isMember = tr
               </button>
             )}
           </div>
+          {/* Tri d'affichage : un seul bouton icône, critère et sens dans un
+              menu. Personnel : il ne change pas l'ordre du paquet pour les autres. */}
+          <SortMenu
+            label="Trier les cartes"
+            options={CARD_SORTS}
+            value={cardSort}
+            dirLabels={(k) => (k === "recto" || k === "verso"
+              ? { asc: "A → Z", desc: "Z → A" }
+              : k === "created"
+                ? { asc: "Plus ancienne d'abord", desc: "Plus récente d'abord" }
+                : { asc: "Du début à la fin", desc: "De la fin au début" })}
+            onChange={setCardSort}
+          />
+          </div>
         )}
 
         {cards.length > 0 && (
@@ -312,6 +330,14 @@ export default function DeckView({ deck, uid, pseudo, groups = [], isMember = tr
 
       {selecting && (
         <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-violet-50 px-3 py-2 ring-1 ring-violet-200 dark:bg-violet-500/10 dark:ring-violet-500/30">
+          <button
+            onClick={exitSelect}
+            aria-label="Quitter la sélection"
+            title="Quitter la sélection"
+            className="-ml-1 flex h-8 w-8 items-center justify-center rounded-lg text-violet-700 transition hover:bg-violet-100 dark:text-violet-200 dark:hover:bg-violet-500/20"
+          >
+            <X size={18} />
+          </button>
           <span className="text-sm font-medium text-violet-800 dark:text-violet-200">
             {nbSelected} carte{nbSelected > 1 ? "s" : ""} sélectionnée{nbSelected > 1 ? "s" : ""}
             {q ? " · recherche en cours" : ""}
@@ -339,36 +365,9 @@ export default function DeckView({ deck, uid, pseudo, groups = [], isMember = tr
         </div>
       )}
 
-      {/* Tri d'affichage + dépli global. Le tri est personnel : il ne change
-          pas l'ordre du paquet pour les autres membres. */}
+      {/* Dépli global des cartes affichées. */}
       {!loading && cards.length > 0 && (
-        <div className="mt-3 flex items-center gap-1.5">
-          <div className="relative">
-            <ArrowDownWideNarrow size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
-            <select
-              value={cardSort.key}
-              onChange={(e) => setCardSort({ key: e.target.value, dir: "asc" })}
-              aria-label="Trier les cartes"
-              className="h-10 appearance-none rounded-xl border border-slate-200 bg-white pl-9 pr-8 text-sm font-medium text-slate-700 outline-none focus-visible:border-violet-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-            >
-              {CARD_SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-            </select>
-            <ChevronDown size={14} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
-          </div>
-          <button
-            onClick={() => setCardSort({ ...cardSort, dir: cardSort.dir === "asc" ? "desc" : "asc" })}
-            aria-label={cardSort.dir === "asc" ? "Tri croissant, cliquer pour décroissant" : "Tri décroissant, cliquer pour croissant"}
-            title={
-              cardSort.key === "recto" || cardSort.key === "verso"
-                ? (cardSort.dir === "asc" ? "A → Z" : "Z → A")
-                : cardSort.key === "created"
-                  ? (cardSort.dir === "asc" ? "Plus ancienne d'abord" : "Plus récente d'abord")
-                  : (cardSort.dir === "asc" ? "Du début à la fin" : "De la fin au début")
-            }
-            className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:text-violet-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:text-violet-300"
-          >
-            {cardSort.dir === "asc" ? <ArrowUpNarrowWide size={17} /> : <ArrowDownWideNarrow size={17} />}
-          </button>
+        <div className="mt-3 flex items-center justify-end">
           {shown.length > 0 && (
             <button
               onClick={toggleAllExpand}
@@ -427,6 +426,7 @@ export default function DeckView({ deck, uid, pseudo, groups = [], isMember = tr
             selecting={selecting}
             selected={selected.has(c.id)}
             onToggleSelect={() => toggleOne(c.id)}
+            pressProps={cardPress(c.id)}
             canDrag={canDrag}
             dragId={dragId}
             onStartDrag={startDrag}
@@ -585,7 +585,7 @@ function FaceFull({ label, text, img }) {
    n'apparaît que si l'aperçu est réellement tronqué (mesure à la mise en page),
    ou tant que la carte est dépliée (pour pouvoir la replier). */
 function CardRow({
-  card, numero, selecting, selected, onToggleSelect,
+  card, numero, selecting, selected, onToggleSelect, pressProps,
   canDrag, dragId, onStartDrag, onDragMove, onDragEnd,
   uid, onSetLearned, canEdit, onEdit, onDelete,
   expanded, onToggleExpand,
@@ -610,28 +610,31 @@ function CardRow({
   return (
     <div
       data-card-id={card.id}
-      onClick={selecting ? onToggleSelect : undefined}
-      className={`flex items-stretch gap-2 rounded-2xl bg-white dark:bg-slate-900 p-3 shadow-sm ring-1 transition-shadow ${
-        selecting ? "cursor-pointer" : ""
-      } ${
+      {...pressProps}
+      className={`relative flex select-none items-stretch gap-2 rounded-2xl bg-white dark:bg-slate-900 p-3 shadow-sm ring-1 transition-shadow [-webkit-touch-callout:none] ${
         dragId === card.id ? "ring-2 ring-violet-400 shadow-lg"
           : selecting && selected ? "ring-2 ring-violet-400 dark:ring-violet-500"
           : "ring-slate-200 dark:ring-slate-700"
       } ${selecting && !selected ? "opacity-55" : ""}`}
     >
       {selecting && (
-        // La ligne entière bascule la case : viser un carré de 16 px au doigt
-        // serait pénible sur une longue liste.
-        <span className="flex w-6 shrink-0 items-center justify-center">
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={onToggleSelect}
-            onClick={(e) => e.stopPropagation()}
-            aria-label={`Sélectionner la carte ${numero}`}
-            className="h-4 w-4 accent-violet-600"
+        <>
+          {/* En sélection, toute la ligne coche / décoche : un calque par-dessus
+              intercepte les touchers (ni édition ni suivi par erreur). */}
+          <button
+            onClick={onToggleSelect}
+            aria-pressed={selected}
+            aria-label={`${selected ? "Désélectionner" : "Sélectionner"} la carte ${numero}`}
+            className="absolute inset-0 z-10 rounded-2xl"
           />
-        </span>
+          <span className="flex w-6 shrink-0 items-center justify-center" aria-hidden="true">
+            <span className={`flex h-5 w-5 items-center justify-center rounded-md ring-1 ${
+              selected ? "bg-violet-600 text-white ring-violet-600" : "bg-white ring-slate-300 dark:bg-slate-900 dark:ring-slate-600"
+            }`}>
+              {selected && <Check size={13} />}
+            </span>
+          </span>
+        </>
       )}
       {canDrag && (
         <button
@@ -639,6 +642,7 @@ function CardRow({
           onPointerMove={onDragMove}
           onPointerUp={onDragEnd}
           onPointerCancel={onDragEnd}
+          data-no-longpress
           aria-label="Déplacer la carte"
           title="Glisser pour réordonner"
           className="flex w-6 shrink-0 touch-none cursor-grab items-center justify-center text-slate-300 dark:text-slate-600 transition hover:text-slate-500 dark:hover:text-slate-400 active:cursor-grabbing"

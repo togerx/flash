@@ -99,3 +99,32 @@ html { overscroll-behavior-x: none; }
 @media (prefers-reduced-motion: reduce) {
   .flip-inner, .lb-veil, .lb-img, .logo-breathe { transition: none; animation: none; }
 }
+
+/* Navigation principale (NavLayout) : place occupée par la barre d'onglets du
+   bas (téléphone) ou la barre latérale (≥ 768 px). La classe `has-app-nav` est
+   posée sur <html> tant que la barre est affichée (pas pendant une révision).
+   Sert à la hauteur minimale des pages et au bandeau de mise à jour, qui vit
+   hors de NavLayout. */
+:root { --nav-bottom: 0px; --nav-left: 0px; }
+html.has-app-nav { --nav-bottom: calc(4rem + env(safe-area-inset-bottom)); }
+@media (min-width: 768px) {
+  html.has-app-nav { --nav-bottom: 0px; --nav-left: 14rem; }
+}
+/* Hauteur d'écran moins la barre du bas : une page courte ne défile pas. */
+.min-h-page { min-height: calc(100vh - var(--nav-bottom)); }
+/* La barre du bas inclut déjà la marge de l'encoche : le bandeau de mise à jour
+   posé au-dessus n'a besoin que d'un petit écart. */
+html.has-app-nav .update-prompt { padding-bottom: 0.75rem; }
+@media (min-width: 768px) {
+  html.has-app-nav .update-prompt { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+}
+
+/* Page sans barre de défilement visible (page Paquets) : on défile toujours au
+   doigt, à la molette ou au pavé tactile. Classe posée sur <html> par la page. */
+html.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+html.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Menu de tri (SortMenu) : apparition courte depuis son bouton. */
+@keyframes sort-menu-in { from { opacity: 0; transform: translateY(-4px) scale(.97); } to { opacity: 1; transform: none; } }
+.sort-menu { animation: sort-menu-in .14s cubic-bezier(.2,.8,.2,1); }
+@media (prefers-reduced-motion: reduce) { .sort-menu { animation: none; } }
